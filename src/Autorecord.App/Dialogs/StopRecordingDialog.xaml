@@ -1,0 +1,32 @@
+<Window x:Class="Autorecord.App.Dialogs.StopRecordingDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Остановить запись?"
+        Width="360"
+        Height="160"
+        WindowStartupLocation="CenterScreen"
+        Topmost="True"
+        ResizeMode="NoResize">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <TextBlock Text="На вводе и выводе тишина. Остановить запись?"
+                   TextWrapping="Wrap"
+                   VerticalAlignment="Center" />
+        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Width="88"
+                    Margin="0,0,8,0"
+                    IsDefault="True"
+                    Click="Yes_Click">
+                Да
+            </Button>
+            <Button Width="88"
+                    IsCancel="True"
+                    Click="No_Click">
+                Нет
+            </Button>
+        </StackPanel>
+    </Grid>
+</Window>

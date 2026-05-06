@@ -1,12 +1,50 @@
-﻿<Window x:Class="Autorecord.App.MainWindow"
+<Window x:Class="Autorecord.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:Autorecord.App"
-        mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
-    <Grid>
-
+        Title="Autorecord"
+        Width="720"
+        Height="520">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition />
+        </Grid.RowDefinitions>
+        <TextBlock Text="iCal-ссылка" />
+        <TextBox x:Name="CalendarUrlBox" Grid.Row="1" Margin="0,6,0,12" />
+        <Button Grid.Row="2"
+                Width="180"
+                HorizontalAlignment="Left"
+                Click="RefreshCalendar_Click">
+            Обновить календарь
+        </Button>
+        <StackPanel Grid.Row="3" Margin="0,16,0,0">
+            <TextBlock Text="Папка сохранения" />
+            <DockPanel Margin="0,6,0,12">
+                <Button DockPanel.Dock="Right"
+                        Width="100"
+                        Click="ChooseFolder_Click">
+                    Выбрать
+                </Button>
+                <TextBox x:Name="OutputFolderBox" Margin="0,0,8,0" />
+            </DockPanel>
+            <CheckBox x:Name="TaggedModeBox" Content="Записывать только события с меткой" />
+            <TextBox x:Name="EventTagBox" Margin="0,6,0,12" />
+            <TextBlock Text="Минут тишины до запроса" />
+            <TextBox x:Name="SilenceMinutesBox" Margin="0,6,0,12" />
+            <TextBlock Text="Минут ожидания после ответа Нет" />
+            <TextBox x:Name="RetryMinutesBox" Margin="0,6,0,12" />
+            <CheckBox x:Name="StartupBox" Content="Запускать вместе с Windows" />
+            <Button Width="120"
+                    Margin="0,16,0,0"
+                    HorizontalAlignment="Left"
+                    Click="Save_Click">
+                Сохранить
+            </Button>
+        </StackPanel>
+        <TextBlock x:Name="StatusText" Grid.Row="5" VerticalAlignment="Bottom" />
     </Grid>
 </Window>
