@@ -86,6 +86,7 @@ public partial class App : System.Windows.Application
     protected override void OnExit(ExitEventArgs e)
     {
         _shutdown.Cancel();
+        StopRecordingOnExit();
         _trayIconHost?.Dispose();
         _httpClient?.Dispose();
         _shutdown.Dispose();
@@ -240,10 +241,10 @@ public partial class App : System.Windows.Application
             return;
         }
 
-        _handledStartsAt.Add(dueEvent.StartsAt);
         try
         {
             await _recordingCoordinator.StartAsync(dueEvent, _settings, cancellationToken);
+            _handledStartsAt.Add(dueEvent.StartsAt);
         }
         catch (Exception ex)
         {
@@ -266,6 +267,27 @@ public partial class App : System.Windows.Application
     private void RecordingCoordinator_StopPromptRequired(object? sender, RecordingSession session)
     {
         Dispatcher.BeginInvoke(() => _ = ShowStopPromptAsync(_shutdown.Token));
+    }
+
+    private void StopRecordingOnExit()
+    {
+        var recordingCoordinator = _recordingCoordinator;
+        if (recordingCoordinator?.IsRecording != true)
+        {
+            return;
+        }
+
+        try
+        {
+            using var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            Task.Run(() => recordingCoordinator.ConfirmStopAsync(stopTimeout.Token))
+                .GetAwaiter()
+                .GetResult();
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Не удалось завершить запись при выходе: {ex.Message}");
+        }
     }
 
     private async Task ShowStopPromptAsync(CancellationToken cancellationToken)
