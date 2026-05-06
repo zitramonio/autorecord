@@ -38,7 +38,15 @@ public sealed class TrayIconHost : IDisposable
     {
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Открыть", null, (_, _) => ShowWindow());
-        menu.Items.Add("Выход", null, (_, _) => System.Windows.Application.Current.Shutdown());
+        menu.Items.Add("Выход", null, (_, _) =>
+        {
+            if (_window is MainWindow mainWindow)
+            {
+                mainWindow.AllowClose = true;
+            }
+
+            System.Windows.Application.Current.Shutdown();
+        });
         return menu;
     }
 

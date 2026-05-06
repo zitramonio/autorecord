@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Windows;
 using Autorecord.Core.Settings;
 using Forms = System.Windows.Forms;
@@ -16,6 +17,8 @@ public partial class MainWindow : Window
 
     public event EventHandler? RefreshCalendarRequested;
     public event EventHandler<AppSettings>? SettingsSaved;
+
+    public bool AllowClose { get; set; }
 
     public void SetSettings(AppSettings settings)
     {
@@ -71,8 +74,12 @@ public partial class MainWindow : Window
     private bool TryReadFromForm(out AppSettings settings)
     {
         settings = _settings;
+        var recordingMode = TaggedModeBox.IsChecked == true ? RecordingMode.TaggedEvents : RecordingMode.AllEvents;
 
-        if (!TryReadPositiveMinutes(SilenceMinutesBox.Text, "Минут тишины до запроса", out var silenceMinutes) ||
+        if (!TryReadRequiredText(CalendarUrlBox.Text, "iCal-ссылка", out var calendarUrl) ||
+            !TryReadRequiredText(OutputFolderBox.Text, "Папка сохранения", out var outputFolder) ||
+            (recordingMode == RecordingMode.TaggedEvents && !TryReadRequiredText(EventTagBox.Text, "Метка события", out _)) ||
+            !TryReadPositiveMinutes(SilenceMinutesBox.Text, "Минут тишины до запроса", out var silenceMinutes) ||
             !TryReadPositiveMinutes(RetryMinutesBox.Text, "Минут ожидания после ответа Нет", out var retryMinutes))
         {
             return false;
@@ -80,9 +87,9 @@ public partial class MainWindow : Window
 
         settings = new AppSettings
         {
-            CalendarUrl = CalendarUrlBox.Text.Trim(),
-            OutputFolder = OutputFolderBox.Text.Trim(),
-            RecordingMode = TaggedModeBox.IsChecked == true ? RecordingMode.TaggedEvents : RecordingMode.AllEvents,
+            CalendarUrl = calendarUrl,
+            OutputFolder = outputFolder,
+            RecordingMode = recordingMode,
             EventTag = EventTagBox.Text.Trim(),
             SilencePromptMinutes = silenceMinutes,
             RetryPromptMinutes = retryMinutes,
@@ -90,6 +97,34 @@ public partial class MainWindow : Window
         };
 
         return true;
+    }
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        if (!AllowClose && System.Windows.Application.Current?.Dispatcher.HasShutdownStarted != true)
+        {
+            e.Cancel = true;
+            Hide();
+            return;
+        }
+
+        base.OnClosing(e);
+    }
+
+    private bool TryReadRequiredText(string text, string fieldName, out string value)
+    {
+        value = text.Trim();
+        if (value.Length > 0)
+        {
+            return true;
+        }
+
+        System.Windows.MessageBox.Show(
+            $"{fieldName}: укажите значение.",
+            "Некорректные настройки",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
+        return false;
     }
 
     private bool TryReadPositiveMinutes(string text, string fieldName, out int minutes)
