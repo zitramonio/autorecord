@@ -21,6 +21,7 @@ public sealed class StopConfirmationPolicy
         if (!bothSourcesSilent)
         {
             _silenceStartedAt = null;
+            _waitingForAnswer = false;
             return false;
         }
 

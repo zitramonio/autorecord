@@ -88,4 +88,21 @@ public sealed class StopConfirmationPolicyTests
 
         Assert.False(policy.ShouldPrompt(now, false));
     }
+
+    [Fact]
+    public void SoundAfterPromptAllowsFuturePromptAfterFreshSilence()
+    {
+        var policy = new StopConfirmationPolicy(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(5));
+        var started = new DateTimeOffset(2026, 5, 6, 18, 0, 0, TimeSpan.Zero);
+        var firstPromptAt = started.AddMinutes(1);
+        var soundAt = firstPromptAt.AddSeconds(10);
+        var freshSilenceStartedAt = soundAt.AddSeconds(10);
+        var secondPromptAt = freshSilenceStartedAt.AddMinutes(1);
+
+        Assert.False(policy.ShouldPrompt(started, true));
+        Assert.True(policy.ShouldPrompt(firstPromptAt, true));
+        Assert.False(policy.ShouldPrompt(soundAt, false));
+        Assert.False(policy.ShouldPrompt(freshSilenceStartedAt, true));
+        Assert.True(policy.ShouldPrompt(secondPromptAt, true));
+    }
 }
