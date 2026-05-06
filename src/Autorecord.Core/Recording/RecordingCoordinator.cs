@@ -10,6 +10,7 @@ public sealed class RecordingCoordinator
     private const float SilenceThreshold = 0.01f;
     private readonly Func<DateTimeOffset> _clock;
     private readonly Func<IAudioRecorder> _recorderFactory;
+    private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private IAudioRecorder? _recorder;
     private StopConfirmationPolicy? _stopPolicy;
 
@@ -28,43 +29,73 @@ public sealed class RecordingCoordinator
 
     public async Task StartAsync(CalendarEvent calendarEvent, AppSettings settings, CancellationToken cancellationToken)
     {
-        if (IsRecording)
+        await _lifecycleGate.WaitAsync(cancellationToken);
+        try
         {
-            return;
+            if (IsRecording)
+            {
+                return;
+            }
+
+            var startedAt = _clock();
+            var outputPath = RecordingFileNamer.GetAvailablePath(settings.OutputFolder, startedAt);
+            var recorder = _recorderFactory();
+            var session = new RecordingSession(calendarEvent, startedAt, outputPath);
+            _stopPolicy = new StopConfirmationPolicy(
+                TimeSpan.FromMinutes(settings.SilencePromptMinutes),
+                TimeSpan.FromMinutes(settings.RetryPromptMinutes));
+            _recorder = recorder;
+            recorder.LevelChanged += OnLevelChanged;
+            CurrentSession = session;
+
+            try
+            {
+                await recorder.StartAsync(outputPath, cancellationToken);
+            }
+            catch
+            {
+                recorder.LevelChanged -= OnLevelChanged;
+                CurrentSession = null;
+                _recorder = null;
+                _stopPolicy = null;
+                await recorder.DisposeAsync();
+                throw;
+            }
+
+            RecordingStarted?.Invoke(this, session);
         }
-
-        var startedAt = _clock();
-        var outputPath = RecordingFileNamer.GetAvailablePath(settings.OutputFolder, startedAt);
-        _stopPolicy = new StopConfirmationPolicy(
-            TimeSpan.FromMinutes(settings.SilencePromptMinutes),
-            TimeSpan.FromMinutes(settings.RetryPromptMinutes));
-        _recorder = _recorderFactory();
-        _recorder.LevelChanged += OnLevelChanged;
-        CurrentSession = new RecordingSession(calendarEvent, startedAt, outputPath);
-
-        await _recorder.StartAsync(outputPath, cancellationToken);
-
-        RecordingStarted?.Invoke(this, CurrentSession);
+        finally
+        {
+            _lifecycleGate.Release();
+        }
     }
 
     public async Task ConfirmStopAsync(CancellationToken cancellationToken)
     {
-        if (_recorder is null || CurrentSession is null)
+        await _lifecycleGate.WaitAsync(cancellationToken);
+        try
         {
-            return;
+            if (_recorder is null || CurrentSession is null)
+            {
+                return;
+            }
+
+            var recorder = _recorder;
+            var session = CurrentSession;
+            _recorder = null;
+            _stopPolicy = null;
+            CurrentSession = null;
+            recorder.LevelChanged -= OnLevelChanged;
+
+            await recorder.StopAsync(cancellationToken);
+            await recorder.DisposeAsync();
+
+            RecordingSaved?.Invoke(this, session);
         }
-
-        var recorder = _recorder;
-        var session = CurrentSession;
-        _recorder = null;
-        _stopPolicy = null;
-        CurrentSession = null;
-        recorder.LevelChanged -= OnLevelChanged;
-
-        await recorder.StopAsync(cancellationToken);
-        await recorder.DisposeAsync();
-
-        RecordingSaved?.Invoke(this, session);
+        finally
+        {
+            _lifecycleGate.Release();
+        }
     }
 
     public void DeclineStop() => _stopPolicy?.RecordNo(_clock());
