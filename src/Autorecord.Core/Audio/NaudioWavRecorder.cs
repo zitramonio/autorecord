@@ -1,6 +1,9 @@
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
+using System.Runtime.CompilerServices;
+
+[assembly: InternalsVisibleTo("Autorecord.Core.Tests")]
 
 namespace Autorecord.Core.Audio;
 
@@ -17,6 +20,7 @@ public sealed class NaudioWavRecorder : IAudioRecorder
     private CancellationTokenSource? _writerCancellation;
     private Task? _writerTask;
     private readonly object _gate = new();
+    private readonly object _lifecycleGate = new();
     private float _lastInputPeak;
     private float _lastOutputPeak;
     private bool _recordingActive;
@@ -27,42 +31,60 @@ public sealed class NaudioWavRecorder : IAudioRecorder
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? ".");
-        _input = new WasapiCapture();
-        _output = new WasapiLoopbackCapture();
-        var inputWaveFormat = _input.WaveFormat;
-        var outputWaveFormat = _output.WaveFormat;
-        _inputBuffer = CreateBufferedProvider();
-        _outputBuffer = CreateBufferedProvider();
-        _mixer = new MixingSampleProvider(
-        [
-            new WaveToSampleProvider(_inputBuffer),
-            new WaveToSampleProvider(_outputBuffer)
-        ])
+        lock (_lifecycleGate)
         {
-            ReadFully = true
-        };
-        _writer = new WaveFileWriter(outputPath, MixedWaveFormat);
-        _writerCancellation = new CancellationTokenSource();
-        _recordingActive = true;
-        _writerTask = Task.Run(() => RunWriterLoopAsync(_writerCancellation.Token), CancellationToken.None);
+            if (_recordingActive)
+            {
+                throw new InvalidOperationException("Recorder is already started.");
+            }
 
-        _input.DataAvailable += (_, e) =>
-        {
-            AddToBuffer(_inputBuffer, e.Buffer, e.BytesRecorded, inputWaveFormat);
-            _lastInputPeak = CalculatePeak(e.Buffer, e.BytesRecorded, inputWaveFormat);
-            LevelChanged?.Invoke(this, new AudioLevel(_lastInputPeak, _lastOutputPeak));
-        };
+            _recordingActive = true;
 
-        _output.DataAvailable += (_, e) =>
-        {
-            AddToBuffer(_outputBuffer, e.Buffer, e.BytesRecorded, outputWaveFormat);
-            _lastOutputPeak = CalculatePeak(e.Buffer, e.BytesRecorded, outputWaveFormat);
-            LevelChanged?.Invoke(this, new AudioLevel(_lastInputPeak, _lastOutputPeak));
-        };
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? ".");
+                _input = new WasapiCapture();
+                _output = new WasapiLoopbackCapture();
+                var inputWaveFormat = _input.WaveFormat;
+                var outputWaveFormat = _output.WaveFormat;
+                _inputBuffer = CreateBufferedProvider();
+                _outputBuffer = CreateBufferedProvider();
+                _mixer = new MixingSampleProvider(
+                [
+                    new WaveToSampleProvider(_inputBuffer),
+                    new WaveToSampleProvider(_outputBuffer)
+                ])
+                {
+                    ReadFully = true
+                };
+                _writer = new WaveFileWriter(outputPath, MixedWaveFormat);
+                _writerCancellation = new CancellationTokenSource();
+                _writerTask = Task.Run(() => RunWriterLoopAsync(_writerCancellation.Token), CancellationToken.None);
 
-        _input.StartRecording();
-        _output.StartRecording();
+                _input.DataAvailable += (_, e) =>
+                {
+                    AddToBuffer(_inputBuffer, e.Buffer, e.BytesRecorded, inputWaveFormat);
+                    _lastInputPeak = CalculatePeak(e.Buffer, e.BytesRecorded, inputWaveFormat);
+                    LevelChanged?.Invoke(this, new AudioLevel(_lastInputPeak, _lastOutputPeak));
+                };
+
+                _output.DataAvailable += (_, e) =>
+                {
+                    AddToBuffer(_outputBuffer, e.Buffer, e.BytesRecorded, outputWaveFormat);
+                    _lastOutputPeak = CalculatePeak(e.Buffer, e.BytesRecorded, outputWaveFormat);
+                    LevelChanged?.Invoke(this, new AudioLevel(_lastInputPeak, _lastOutputPeak));
+                };
+
+                _input.StartRecording();
+                _output.StartRecording();
+            }
+            catch
+            {
+                StopCore();
+                throw;
+            }
+        }
+
         return Task.CompletedTask;
     }
 
@@ -70,6 +92,16 @@ public sealed class NaudioWavRecorder : IAudioRecorder
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        lock (_lifecycleGate)
+        {
+            StopCore();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private void StopCore()
+    {
         _recordingActive = false;
         _input?.StopRecording();
         _output?.StopRecording();
@@ -99,8 +131,6 @@ public sealed class NaudioWavRecorder : IAudioRecorder
         _writerCancellation?.Dispose();
         _writerCancellation = null;
         _writerTask = null;
-
-        return Task.CompletedTask;
     }
 
     public async ValueTask DisposeAsync()
@@ -178,30 +208,78 @@ public sealed class NaudioWavRecorder : IAudioRecorder
         return converted.ToArray();
     }
 
-    private static float CalculatePeak(byte[] buffer, int bytesRecorded, WaveFormat waveFormat)
+    internal static float CalculatePeak(byte[] buffer, int bytesRecorded, WaveFormat waveFormat)
     {
         var max = 0f;
+        var format = waveFormat is WaveFormatExtensible extensible
+            ? extensible.ToStandardWaveFormat()
+            : waveFormat;
 
-        if (waveFormat.Encoding == WaveFormatEncoding.IeeeFloat && waveFormat.BitsPerSample == 32)
+        if (format.Encoding == WaveFormatEncoding.IeeeFloat && format.BitsPerSample == 32)
         {
             for (var index = 0; index + 3 < bytesRecorded; index += 4)
             {
                 var sample = BitConverter.ToSingle(buffer, index);
-                max = Math.Max(max, Math.Abs(sample));
+                if (!float.IsNaN(sample))
+                {
+                    max = Math.Max(max, Math.Abs(sample));
+                }
             }
 
             return max;
         }
 
-        if (waveFormat.BitsPerSample == 16)
+        if (format.Encoding == WaveFormatEncoding.Pcm && format.BitsPerSample == 16)
         {
             for (var index = 0; index + 1 < bytesRecorded; index += 2)
             {
                 var sample = BitConverter.ToInt16(buffer, index) / 32768f;
                 max = Math.Max(max, Math.Abs(sample));
             }
+
+            return max;
         }
 
-        return max;
+        if (format.Encoding == WaveFormatEncoding.Pcm && format.BitsPerSample == 24)
+        {
+            for (var index = 0; index + 2 < bytesRecorded; index += 3)
+            {
+                var sample = buffer[index] | (buffer[index + 1] << 8) | (buffer[index + 2] << 16);
+                if ((sample & 0x800000) != 0)
+                {
+                    sample |= unchecked((int)0xFF000000);
+                }
+
+                max = Math.Max(max, Math.Abs(sample / 8388608f));
+            }
+
+            return max;
+        }
+
+        if (format.Encoding == WaveFormatEncoding.Pcm && format.BitsPerSample == 32)
+        {
+            for (var index = 0; index + 3 < bytesRecorded; index += 4)
+            {
+                var sample = BitConverter.ToInt32(buffer, index) / 2147483648f;
+                max = Math.Max(max, Math.Abs(sample));
+            }
+
+            return max;
+        }
+
+        return ContainsNonZeroByte(buffer, bytesRecorded) ? 1f : 0f;
+    }
+
+    private static bool ContainsNonZeroByte(byte[] buffer, int bytesRecorded)
+    {
+        for (var index = 0; index < bytesRecorded; index++)
+        {
+            if (buffer[index] != 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
