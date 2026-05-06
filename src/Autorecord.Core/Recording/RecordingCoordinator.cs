@@ -118,14 +118,17 @@ public sealed class RecordingCoordinator
 
     private void OnLevelChanged(object? sender, AudioLevel level)
     {
-        if (CurrentSession is null || _stopPolicy is null)
+        var session = CurrentSession;
+        var policy = _stopPolicy;
+
+        if (session is null || policy is null)
         {
             return;
         }
 
-        if (_stopPolicy.ShouldPrompt(_clock(), level.BothSilent(SilenceThreshold)))
+        if (policy.ShouldPrompt(_clock(), level.BothSilent(SilenceThreshold)))
         {
-            StopPromptRequired?.Invoke(this, CurrentSession);
+            StopPromptRequired?.Invoke(this, session);
         }
     }
 }

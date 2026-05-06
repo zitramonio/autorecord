@@ -154,6 +154,41 @@ public sealed class RecordingCoordinatorTests
     }
 
     [Fact]
+    public async Task LevelChangedUsesStartedSessionWhenStopClearsStateDuringPromptCheck()
+    {
+        var now = new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero);
+        using var temp = new TempFolder();
+        var recorder = new FakeAudioRecorder();
+        RecordingCoordinator? coordinator = null;
+        var stopDuringNextClock = false;
+        coordinator = new RecordingCoordinator(
+            () => recorder,
+            () =>
+            {
+                if (stopDuringNextClock)
+                {
+                    stopDuringNextClock = false;
+                    coordinator!.ConfirmStopAsync(CancellationToken.None).GetAwaiter().GetResult();
+                }
+
+                return now;
+            });
+        RecordingSession? promptedSession = null;
+
+        coordinator.StopPromptRequired += (_, session) => promptedSession = session;
+
+        await coordinator.StartAsync(CreateEvent(now), CreateSettings(temp.Path), CancellationToken.None);
+        var startedSession = coordinator.CurrentSession;
+        recorder.RaiseLevel(new AudioLevel(0, 0));
+
+        now = now.AddMinutes(1);
+        stopDuringNextClock = true;
+        recorder.RaiseLevel(new AudioLevel(0, 0));
+
+        Assert.Same(startedSession, promptedSession);
+    }
+
+    [Fact]
     public async Task ConfirmStopWaitsForPendingStart()
     {
         var now = new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero);
