@@ -99,6 +99,33 @@ public sealed class RecordingCoordinatorTests
     }
 
     [Fact]
+    public async Task ConfirmStopFailureClearsSessionDisposesRecorderAndDoesNotRaiseSaved()
+    {
+        var now = new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero);
+        using var temp = new TempFolder();
+        var recorder = new FakeAudioRecorder
+        {
+            StopHandler = _ => throw new InvalidOperationException("stop failed")
+        };
+        var coordinator = new RecordingCoordinator(() => recorder, () => now);
+        var saved = 0;
+
+        coordinator.RecordingSaved += (_, _) => saved++;
+
+        await coordinator.StartAsync(CreateEvent(now), CreateSettings(temp.Path), CancellationToken.None);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => coordinator.ConfirmStopAsync(CancellationToken.None));
+
+        Assert.Equal("stop failed", exception.Message);
+        Assert.False(coordinator.IsRecording);
+        Assert.Null(coordinator.CurrentSession);
+        Assert.Equal(1, recorder.StopCalls);
+        Assert.Equal(1, recorder.DisposeCalls);
+        Assert.Equal(0, saved);
+    }
+
+    [Fact]
     public async Task StartFailureClearsSessionAndDisposesRecorder()
     {
         var now = new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero);
@@ -260,6 +287,28 @@ public sealed class RecordingCoordinatorTests
     }
 
     [Fact]
+    public async Task ConcurrentSilentLevelsRaiseSingleStopPromptWhileWaitingForAnswer()
+    {
+        var now = new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero);
+        using var temp = new TempFolder();
+        var recorder = new FakeAudioRecorder();
+        var coordinator = new RecordingCoordinator(() => recorder, () => now);
+        var prompts = 0;
+
+        coordinator.StopPromptRequired += (_, _) => Interlocked.Increment(ref prompts);
+
+        await coordinator.StartAsync(CreateEvent(now), CreateSettings(temp.Path), CancellationToken.None);
+        recorder.RaiseLevel(new AudioLevel(0, 0));
+        now = now.AddMinutes(1);
+
+        await Task.WhenAll(
+            Task.Run(() => recorder.RaiseLevel(new AudioLevel(0, 0))),
+            Task.Run(() => recorder.RaiseLevel(new AudioLevel(0, 0))));
+
+        Assert.Equal(1, prompts);
+    }
+
+    [Fact]
     public async Task DeclineStopDelaysNextPrompt()
     {
         var now = new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero);
@@ -324,6 +373,7 @@ public sealed class RecordingCoordinatorTests
         public int StartCalls { get; private set; }
         public Func<string, CancellationToken, Task>? StartHandler { get; init; }
         public int StopCalls { get; private set; }
+        public Func<CancellationToken, Task>? StopHandler { get; init; }
 
         public ValueTask DisposeAsync()
         {
@@ -341,7 +391,7 @@ public sealed class RecordingCoordinatorTests
         public Task StopAsync(CancellationToken cancellationToken)
         {
             StopCalls++;
-            return Task.CompletedTask;
+            return StopHandler?.Invoke(cancellationToken) ?? Task.CompletedTask;
         }
 
         public void RaiseLevel(AudioLevel level) => LevelChanged?.Invoke(this, level);

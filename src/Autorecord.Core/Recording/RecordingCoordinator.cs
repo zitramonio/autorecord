@@ -11,6 +11,7 @@ public sealed class RecordingCoordinator
     private readonly Func<DateTimeOffset> _clock;
     private readonly Func<IAudioRecorder> _recorderFactory;
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
+    private readonly object _policyGate = new();
     private IAudioRecorder? _recorder;
     private StopConfirmationPolicy? _stopPolicy;
 
@@ -43,9 +44,13 @@ public sealed class RecordingCoordinator
             var outputPath = RecordingFileNamer.GetAvailablePath(settings.OutputFolder, startedAt);
             var recorder = _recorderFactory();
             var session = new RecordingSession(calendarEvent, startedAt, outputPath);
-            _stopPolicy = new StopConfirmationPolicy(
-                TimeSpan.FromMinutes(settings.SilencePromptMinutes),
-                TimeSpan.FromMinutes(settings.RetryPromptMinutes));
+            lock (_policyGate)
+            {
+                _stopPolicy = new StopConfirmationPolicy(
+                    TimeSpan.FromMinutes(settings.SilencePromptMinutes),
+                    TimeSpan.FromMinutes(settings.RetryPromptMinutes));
+            }
+
             _recorder = recorder;
             recorder.LevelChanged += OnLevelChanged;
             CurrentSession = session;
@@ -59,7 +64,11 @@ public sealed class RecordingCoordinator
                 recorder.LevelChanged -= OnLevelChanged;
                 CurrentSession = null;
                 _recorder = null;
-                _stopPolicy = null;
+                lock (_policyGate)
+                {
+                    _stopPolicy = null;
+                }
+
                 await recorder.DisposeAsync();
                 throw;
             }
@@ -80,6 +89,7 @@ public sealed class RecordingCoordinator
     public async Task ConfirmStopAsync(CancellationToken cancellationToken)
     {
         RecordingSession? sessionToRaise = null;
+        IAudioRecorder? recorderToStop = null;
 
         await _lifecycleGate.WaitAsync(cancellationToken);
         try
@@ -92,18 +102,33 @@ public sealed class RecordingCoordinator
             var recorder = _recorder;
             var session = CurrentSession;
             _recorder = null;
-            _stopPolicy = null;
             CurrentSession = null;
             recorder.LevelChanged -= OnLevelChanged;
-
-            await recorder.StopAsync(cancellationToken);
-            await recorder.DisposeAsync();
+            lock (_policyGate)
+            {
+                _stopPolicy = null;
+            }
 
             sessionToRaise = session;
+            recorderToStop = recorder;
         }
         finally
         {
             _lifecycleGate.Release();
+        }
+
+        try
+        {
+            await recorderToStop.StopAsync(cancellationToken);
+        }
+        catch
+        {
+            sessionToRaise = null;
+            throw;
+        }
+        finally
+        {
+            await recorderToStop.DisposeAsync();
         }
 
         if (sessionToRaise is not null)
@@ -112,9 +137,21 @@ public sealed class RecordingCoordinator
         }
     }
 
-    public void DeclineStop() => _stopPolicy?.RecordNo(_clock());
+    public void DeclineStop()
+    {
+        lock (_policyGate)
+        {
+            _stopPolicy?.RecordNo(_clock());
+        }
+    }
 
-    public void IgnoreStopPrompt() => _stopPolicy?.RecordNoAnswer(_clock());
+    public void IgnoreStopPrompt()
+    {
+        lock (_policyGate)
+        {
+            _stopPolicy?.RecordNoAnswer(_clock());
+        }
+    }
 
     private void OnLevelChanged(object? sender, AudioLevel level)
     {
@@ -126,7 +163,14 @@ public sealed class RecordingCoordinator
             return;
         }
 
-        if (policy.ShouldPrompt(_clock(), level.BothSilent(SilenceThreshold)))
+        var shouldPrompt = false;
+        lock (_policyGate)
+        {
+            shouldPrompt = ReferenceEquals(policy, _stopPolicy)
+                && policy.ShouldPrompt(_clock(), level.BothSilent(SilenceThreshold));
+        }
+
+        if (shouldPrompt)
         {
             StopPromptRequired?.Invoke(this, session);
         }
