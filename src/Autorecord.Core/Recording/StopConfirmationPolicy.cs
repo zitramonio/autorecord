@@ -6,6 +6,7 @@ public sealed class StopConfirmationPolicy
     private readonly TimeSpan _retryInterval;
     private DateTimeOffset? _silenceStartedAt;
     private DateTimeOffset? _snoozedUntil;
+    private bool _waitingForAnswer;
 
     public StopConfirmationPolicy(TimeSpan silenceInterval, TimeSpan retryInterval)
     {
@@ -23,6 +24,11 @@ public sealed class StopConfirmationPolicy
             return false;
         }
 
+        if (_waitingForAnswer)
+        {
+            return false;
+        }
+
         if (_snoozedUntil is not null && now < _snoozedUntil.Value)
         {
             return false;
@@ -36,18 +42,26 @@ public sealed class StopConfirmationPolicy
 
         _silenceStartedAt ??= now;
 
-        return now - _silenceStartedAt.Value >= _silenceInterval;
+        if (now - _silenceStartedAt.Value < _silenceInterval)
+        {
+            return false;
+        }
+
+        _waitingForAnswer = true;
+        return true;
     }
 
     public void RecordNo(DateTimeOffset now)
     {
         _snoozedUntil = now + _retryInterval;
         _silenceStartedAt = null;
+        _waitingForAnswer = false;
     }
 
     public void RecordNoAnswer(DateTimeOffset now)
     {
         _snoozedUntil = null;
         _silenceStartedAt ??= now - _silenceInterval;
+        _waitingForAnswer = false;
     }
 }
