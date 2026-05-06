@@ -29,6 +29,8 @@ public sealed class RecordingCoordinator
 
     public async Task StartAsync(CalendarEvent calendarEvent, AppSettings settings, CancellationToken cancellationToken)
     {
+        RecordingSession? sessionToRaise = null;
+
         await _lifecycleGate.WaitAsync(cancellationToken);
         try
         {
@@ -62,16 +64,23 @@ public sealed class RecordingCoordinator
                 throw;
             }
 
-            RecordingStarted?.Invoke(this, session);
+            sessionToRaise = session;
         }
         finally
         {
             _lifecycleGate.Release();
         }
+
+        if (sessionToRaise is not null)
+        {
+            RecordingStarted?.Invoke(this, sessionToRaise);
+        }
     }
 
     public async Task ConfirmStopAsync(CancellationToken cancellationToken)
     {
+        RecordingSession? sessionToRaise = null;
+
         await _lifecycleGate.WaitAsync(cancellationToken);
         try
         {
@@ -90,11 +99,16 @@ public sealed class RecordingCoordinator
             await recorder.StopAsync(cancellationToken);
             await recorder.DisposeAsync();
 
-            RecordingSaved?.Invoke(this, session);
+            sessionToRaise = session;
         }
         finally
         {
             _lifecycleGate.Release();
+        }
+
+        if (sessionToRaise is not null)
+        {
+            RecordingSaved?.Invoke(this, sessionToRaise);
         }
     }
 

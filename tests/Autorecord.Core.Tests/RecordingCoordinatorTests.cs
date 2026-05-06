@@ -55,6 +55,28 @@ public sealed class RecordingCoordinatorTests
     }
 
     [Fact]
+    public async Task RecordingStartedHandlerCanStopWithoutDeadlock()
+    {
+        var now = new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero);
+        using var temp = new TempFolder();
+        var recorder = new FakeAudioRecorder
+        {
+            StartHandler = async (_, _) => await Task.Yield()
+        };
+        var coordinator = new RecordingCoordinator(() => recorder, () => now);
+
+        coordinator.RecordingStarted += (_, _) =>
+            coordinator.ConfirmStopAsync(CancellationToken.None).GetAwaiter().GetResult();
+
+        var startTask = coordinator.StartAsync(CreateEvent(now), CreateSettings(temp.Path), CancellationToken.None);
+        var completedTask = await Task.WhenAny(startTask, Task.Delay(TimeSpan.FromSeconds(1)));
+
+        Assert.Same(startTask, completedTask);
+        await startTask;
+        Assert.False(coordinator.IsRecording);
+    }
+
+    [Fact]
     public async Task ConfirmStopStopsDisposesAndRaisesSaved()
     {
         var now = new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero);
@@ -178,7 +200,9 @@ public sealed class RecordingCoordinatorTests
         Assert.Equal(1, recorder.DisposeCalls);
         Assert.False(nullStartedSession);
         Assert.False(nullSavedSession);
-        Assert.Equal(new[] { "started", "saved" }, events);
+        Assert.Equal(2, events.Count);
+        Assert.Contains("started", events);
+        Assert.Contains("saved", events);
     }
 
     [Fact]
