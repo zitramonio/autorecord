@@ -21,6 +21,38 @@ public sealed class ScheduleMonitorTests
     }
 
     [Fact]
+    public void DoesNotReturnAlreadyHandledEventStart()
+    {
+        var firstTick = new DateTimeOffset(2026, 5, 6, 18, 42, 10, TimeSpan.Zero);
+        var secondTick = firstTick.AddSeconds(20);
+        var startsAt = firstTick.AddSeconds(-10);
+        var events = new[]
+        {
+            new CalendarEvent("Call", startsAt, startsAt.AddHours(1))
+        };
+        var handledStartsAt = new HashSet<DateTimeOffset> { startsAt };
+
+        var due = ScheduleMonitor.FindDueEvent(events, secondTick, false, handledStartsAt: handledStartsAt);
+
+        Assert.Null(due);
+    }
+
+    [Fact]
+    public void FindsEventStartedExactlyOneMinuteAgo()
+    {
+        var now = new DateTimeOffset(2026, 5, 6, 18, 42, 10, TimeSpan.Zero);
+        var events = new[]
+        {
+            new CalendarEvent("Call", now.AddMinutes(-1), now.AddHours(1))
+        };
+
+        var due = ScheduleMonitor.FindDueEvent(events, now, false);
+
+        Assert.NotNull(due);
+        Assert.Equal("Call", due.Title);
+    }
+
+    [Fact]
     public void DoesNotStartEventThatStartedBeforeApplication()
     {
         var appStartedAt = new DateTimeOffset(2026, 5, 6, 18, 40, 0, TimeSpan.Zero);

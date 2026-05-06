@@ -8,7 +8,8 @@ public static class ScheduleMonitor
         IEnumerable<CalendarEvent> events,
         DateTimeOffset now,
         bool recordingActive,
-        DateTimeOffset? appStartedAt = null)
+        DateTimeOffset? appStartedAt = null,
+        IReadOnlySet<DateTimeOffset>? handledStartsAt = null)
     {
         if (recordingActive)
         {
@@ -18,7 +19,8 @@ public static class ScheduleMonitor
         var startBoundary = appStartedAt ?? DateTimeOffset.MinValue;
         return events
             .Where(e => e.StartsAt >= startBoundary)
-            .Where(e => e.StartsAt <= now && e.StartsAt > now.AddMinutes(-1))
+            .Where(e => handledStartsAt is null || !handledStartsAt.Contains(e.StartsAt))
+            .Where(e => e.StartsAt <= now && e.StartsAt >= now.AddMinutes(-1))
             .OrderBy(e => e.StartsAt)
             .FirstOrDefault();
     }
