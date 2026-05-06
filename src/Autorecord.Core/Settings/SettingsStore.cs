@@ -21,7 +21,9 @@ public sealed class SettingsStore
 
         await using var stream = File.OpenRead(_path);
         var settings = await JsonSerializer.DeserializeAsync<AppSettings>(stream, JsonOptions, cancellationToken);
-        return settings ?? new AppSettings();
+        settings ??= new AppSettings();
+        Validate(settings);
+        return settings;
     }
 
     public async Task SaveAsync(AppSettings settings, CancellationToken cancellationToken)
@@ -47,6 +49,11 @@ public sealed class SettingsStore
         if (settings.RetryPromptMinutes <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(settings), "Retry prompt interval must be positive.");
+        }
+
+        if (!Enum.IsDefined(settings.RecordingMode))
+        {
+            throw new ArgumentOutOfRangeException(nameof(settings), "Recording mode must be known.");
         }
     }
 }

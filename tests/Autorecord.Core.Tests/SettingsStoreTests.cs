@@ -38,4 +38,49 @@ public sealed class SettingsStoreTests
         Assert.Equal(5, loaded.RetryPromptMinutes);
         Assert.Equal(RecordingMode.AllEvents, loaded.RecordingMode);
     }
+
+    [Fact]
+    public async Task LoadRejectsNonPositiveIntervals()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(
+            path,
+            """
+            {
+              "SilencePromptMinutes": 0,
+              "RetryPromptMinutes": 0
+            }
+            """);
+        var store = new SettingsStore(path);
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => store.LoadAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task SaveRejectsUnknownRecordingMode()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var store = new SettingsStore(path);
+        var settings = new AppSettings { RecordingMode = (RecordingMode)999 };
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => store.SaveAsync(settings, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task LoadRejectsUnknownRecordingMode()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(
+            path,
+            """
+            {
+              "RecordingMode": 999
+            }
+            """);
+        var store = new SettingsStore(path);
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => store.LoadAsync(CancellationToken.None));
+    }
 }
