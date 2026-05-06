@@ -1,4 +1,5 @@
 using Autorecord.Core.Settings;
+using Ical.Net.DataTypes;
 using IcalCalendar = Ical.Net.Calendar;
 
 namespace Autorecord.Core.Calendar;
@@ -33,16 +34,37 @@ public sealed class CalendarSyncService
             }
 
             var title = item.Summary ?? "";
-            if (settings.RecordingMode == RecordingMode.TaggedEvents &&
-                !title.Contains(settings.EventTag, StringComparison.OrdinalIgnoreCase))
+            if (settings.RecordingMode == RecordingMode.TaggedEvents)
             {
-                continue;
+                if (string.IsNullOrWhiteSpace(settings.EventTag) ||
+                    !title.Contains(settings.EventTag, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
             }
 
             yield return new CalendarEvent(
                 title,
-                new DateTimeOffset(startsAt.AsUtc),
-                new DateTimeOffset(endsAt.AsUtc));
+                ToDateTimeOffset(startsAt),
+                ToDateTimeOffset(endsAt));
         }
+    }
+
+    private static DateTimeOffset ToDateTimeOffset(CalDateTime value)
+    {
+        if (value.IsUtc)
+        {
+            return new DateTimeOffset(value.AsUtc, TimeSpan.Zero);
+        }
+
+        var localTime = DateTime.SpecifyKind(value.Value, DateTimeKind.Unspecified);
+        if (!value.IsFloating &&
+            !string.IsNullOrWhiteSpace(value.TzId) &&
+            TimeZoneInfo.TryFindSystemTimeZoneById(value.TzId, out var timeZone))
+        {
+            return new DateTimeOffset(localTime, timeZone.GetUtcOffset(localTime));
+        }
+
+        return new DateTimeOffset(localTime, TimeZoneInfo.Local.GetUtcOffset(localTime));
     }
 }
