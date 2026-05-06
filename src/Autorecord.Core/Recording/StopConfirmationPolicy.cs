@@ -23,12 +23,18 @@ public sealed class StopConfirmationPolicy
             return false;
         }
 
-        _silenceStartedAt ??= now;
-
         if (_snoozedUntil is not null && now < _snoozedUntil.Value)
         {
             return false;
         }
+
+        if (_snoozedUntil is not null)
+        {
+            _silenceStartedAt = _snoozedUntil.Value;
+            _snoozedUntil = null;
+        }
+
+        _silenceStartedAt ??= now;
 
         return now - _silenceStartedAt.Value >= _silenceInterval;
     }

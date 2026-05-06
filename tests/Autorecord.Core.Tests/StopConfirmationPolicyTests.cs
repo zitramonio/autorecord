@@ -38,6 +38,19 @@ public sealed class StopConfirmationPolicyTests
     }
 
     [Fact]
+    public void NoWaitsRetryThenRequiresFreshSilenceInterval()
+    {
+        var policy = new StopConfirmationPolicy(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(5));
+        var promptAt = new DateTimeOffset(2026, 5, 6, 18, 1, 0, TimeSpan.Zero);
+
+        policy.RecordNo(promptAt);
+
+        Assert.False(policy.ShouldPrompt(promptAt.AddMinutes(4), true));
+        Assert.False(policy.ShouldPrompt(promptAt.AddMinutes(5), true));
+        Assert.True(policy.ShouldPrompt(promptAt.AddMinutes(6), true));
+    }
+
+    [Fact]
     public void SoundResetsSilenceTimer()
     {
         var policy = new StopConfirmationPolicy(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(5));
