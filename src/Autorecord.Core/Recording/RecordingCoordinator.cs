@@ -89,7 +89,6 @@ public sealed class RecordingCoordinator
     public async Task ConfirmStopAsync(CancellationToken cancellationToken)
     {
         RecordingSession? sessionToRaise = null;
-        IAudioRecorder? recorderToStop = null;
 
         await _lifecycleGate.WaitAsync(cancellationToken);
         try
@@ -101,6 +100,7 @@ public sealed class RecordingCoordinator
 
             var recorder = _recorder;
             var session = CurrentSession;
+
             _recorder = null;
             CurrentSession = null;
             recorder.LevelChanged -= OnLevelChanged;
@@ -109,26 +109,19 @@ public sealed class RecordingCoordinator
                 _stopPolicy = null;
             }
 
-            sessionToRaise = session;
-            recorderToStop = recorder;
+            try
+            {
+                await recorder.StopAsync(cancellationToken);
+                sessionToRaise = session;
+            }
+            finally
+            {
+                await recorder.DisposeAsync();
+            }
         }
         finally
         {
             _lifecycleGate.Release();
-        }
-
-        try
-        {
-            await recorderToStop.StopAsync(cancellationToken);
-        }
-        catch
-        {
-            sessionToRaise = null;
-            throw;
-        }
-        finally
-        {
-            await recorderToStop.DisposeAsync();
         }
 
         if (sessionToRaise is not null)

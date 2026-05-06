@@ -268,6 +268,54 @@ public sealed class RecordingCoordinatorTests
     }
 
     [Fact]
+    public async Task StartWaitsForPendingStopCleanup()
+    {
+        var now = new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero);
+        using var temp = new TempFolder();
+        var stopEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowStop = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstRecorder = new FakeAudioRecorder
+        {
+            StopHandler = _ =>
+            {
+                stopEntered.SetResult();
+                return allowStop.Task;
+            }
+        };
+        var secondRecorder = new FakeAudioRecorder();
+        var factoryCalls = 0;
+        var coordinator = new RecordingCoordinator(
+            () =>
+            {
+                factoryCalls++;
+                return factoryCalls == 1 ? firstRecorder : secondRecorder;
+            },
+            () => now);
+
+        await coordinator.StartAsync(CreateEvent(now), CreateSettings(temp.Path), CancellationToken.None);
+        var stopTask = coordinator.ConfirmStopAsync(CancellationToken.None);
+        await stopEntered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+        var nextEvent = CreateEvent(now.AddHours(1));
+        var restartTask = coordinator.StartAsync(nextEvent, CreateSettings(temp.Path), CancellationToken.None);
+        var completedBeforeCleanup = await Task.WhenAny(restartTask, Task.Delay(TimeSpan.FromMilliseconds(100)));
+
+        Assert.NotSame(restartTask, completedBeforeCleanup);
+        Assert.Equal(1, factoryCalls);
+
+        allowStop.SetResult();
+        await stopTask;
+        await restartTask;
+
+        Assert.True(coordinator.IsRecording);
+        Assert.NotNull(coordinator.CurrentSession);
+        Assert.Equal(nextEvent, coordinator.CurrentSession.CalendarEvent);
+        Assert.Equal(1, firstRecorder.StopCalls);
+        Assert.Equal(1, firstRecorder.DisposeCalls);
+        Assert.Equal(1, secondRecorder.StartCalls);
+    }
+
+    [Fact]
     public async Task SilentLevelsRaiseStopPromptAfterConfiguredInterval()
     {
         var now = new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero);
