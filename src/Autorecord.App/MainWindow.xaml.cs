@@ -15,7 +15,7 @@ public partial class MainWindow : Window
         LoadIntoForm(_settings);
     }
 
-    public event EventHandler? RefreshCalendarRequested;
+    public event EventHandler<AppSettings>? RefreshCalendarRequested;
     public event EventHandler<AppSettings>? SettingsSaved;
 
     public bool AllowClose { get; set; }
@@ -33,7 +33,13 @@ public partial class MainWindow : Window
 
     private void RefreshCalendar_Click(object sender, RoutedEventArgs e)
     {
-        RefreshCalendarRequested?.Invoke(this, EventArgs.Empty);
+        if (!TryReadFromForm(out var settings))
+        {
+            return;
+        }
+
+        _settings = settings;
+        RefreshCalendarRequested?.Invoke(this, _settings);
     }
 
     private void ChooseFolder_Click(object sender, RoutedEventArgs e)

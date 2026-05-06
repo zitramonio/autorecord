@@ -93,8 +93,9 @@ public partial class App : System.Windows.Application
         base.OnExit(e);
     }
 
-    private void MainWindow_RefreshCalendarRequested(object? sender, EventArgs e)
+    private void MainWindow_RefreshCalendarRequested(object? sender, AppSettings settings)
     {
+        _settings = settings;
         _ = RefreshCalendarAsync(_shutdown.Token);
     }
 
