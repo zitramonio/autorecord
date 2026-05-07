@@ -16,7 +16,7 @@ public sealed record ModelDownloadProgress
             }
 
             var percent = BytesDownloaded * 100d / TotalBytes.Value;
-            return Math.Clamp((int)percent, 0, 100);
+            return (int)Math.Clamp(percent, 0d, 100d);
         }
     }
 }

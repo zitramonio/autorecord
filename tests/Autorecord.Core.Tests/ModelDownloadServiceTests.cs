@@ -6,6 +6,19 @@ namespace Autorecord.Core.Tests;
 public sealed class ModelDownloadServiceTests
 {
     [Fact]
+    public void PercentClampsBeforeIntegerCast()
+    {
+        var progress = new ModelDownloadProgress
+        {
+            BytesDownloaded = long.MaxValue,
+            TotalBytes = 1,
+            BytesPerSecond = null
+        };
+
+        Assert.Equal(100, progress.Percent);
+    }
+
+    [Fact]
     public async Task DownloadAsyncThrowsClearErrorForServerFailure()
     {
         var service = CreateService(
