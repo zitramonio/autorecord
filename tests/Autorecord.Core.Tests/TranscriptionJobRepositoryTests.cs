@@ -91,6 +91,17 @@ public sealed class TranscriptionJobRepositoryTests
     }
 
     [Fact]
+    public async Task LoadRejectsNullJobElements()
+    {
+        var path = CreateTempPath();
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, "[null]");
+        var repository = new TranscriptionJobRepository(path);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => repository.LoadAsync(CancellationToken.None));
+    }
+
+    [Fact]
     public async Task LoadRejectsInvalidStatus()
     {
         var path = CreateTempPath();
@@ -117,6 +128,49 @@ public sealed class TranscriptionJobRepositoryTests
     }
 
     [Fact]
+    public async Task LoadRejectsNullOutputFiles()
+    {
+        var path = CreateTempPath();
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(
+            path,
+            """
+            [
+              {
+                "id": "11111111-1111-1111-1111-111111111111",
+                "inputFilePath": "C:\\Records\\meeting.wav",
+                "outputDirectory": "C:\\Transcripts",
+                "asrModelId": "asr-fast",
+                "status": 0,
+                "progressPercent": 0,
+                "createdAt": "2026-05-07T10:00:00+03:00",
+                "outputFiles": null
+              }
+            ]
+            """);
+        var repository = new TranscriptionJobRepository(path);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => repository.LoadAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task SaveRejectsNullJobsArray()
+    {
+        var repository = new TranscriptionJobRepository(CreateTempPath());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => repository.SaveAsync(null!, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task SaveRejectsUnknownStatus()
+    {
+        var repository = new TranscriptionJobRepository(CreateTempPath());
+        var job = CreateJob() with { Status = (TranscriptionJobStatus)999 };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => repository.SaveAsync([job], CancellationToken.None));
+    }
+
+    [Fact]
     public async Task SaveRejectsInvalidProgress()
     {
         var repository = new TranscriptionJobRepository(CreateTempPath());
@@ -130,6 +184,33 @@ public sealed class TranscriptionJobRepositoryTests
     {
         var repository = new TranscriptionJobRepository(CreateTempPath());
         var job = CreateJob() with { OutputDirectory = " " };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => repository.SaveAsync([job], CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task SaveRejectsBlankInputFilePath()
+    {
+        var repository = new TranscriptionJobRepository(CreateTempPath());
+        var job = CreateJob() with { InputFilePath = " " };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => repository.SaveAsync([job], CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task SaveRejectsBlankAsrModelId()
+    {
+        var repository = new TranscriptionJobRepository(CreateTempPath());
+        var job = CreateJob() with { AsrModelId = " " };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => repository.SaveAsync([job], CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task SaveRejectsWhitespaceOutputFileEntries()
+    {
+        var repository = new TranscriptionJobRepository(CreateTempPath());
+        var job = CreateJob() with { OutputFiles = [" "] };
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => repository.SaveAsync([job], CancellationToken.None));
     }
