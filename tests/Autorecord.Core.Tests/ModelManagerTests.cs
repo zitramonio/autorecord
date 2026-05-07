@@ -105,6 +105,26 @@ public sealed class ModelManagerTests
     }
 
     [Fact]
+    public void GetModelPathRejectsCurrentDirectoryTargetFolder()
+    {
+        var root = CreateTempRoot();
+        var model = CreateModel(targetFolder: ".", requiredFiles: ["model.onnx"]);
+        var manager = new ModelManager(root);
+
+        Assert.Throws<ArgumentException>(() => manager.GetModelPath(model));
+    }
+
+    [Fact]
+    public void GetModelPathRejectsTargetFolderThatNormalizesToModelsRoot()
+    {
+        var root = CreateTempRoot();
+        var model = CreateModel(targetFolder: Path.Combine("asr-fast", ".."), requiredFiles: ["model.onnx"]);
+        var manager = new ModelManager(root);
+
+        Assert.Throws<ArgumentException>(() => manager.GetModelPath(model));
+    }
+
+    [Fact]
     public async Task GetStatusAsyncRejectsParentTraversalRequiredFile()
     {
         var root = CreateTempRoot();
@@ -131,6 +151,17 @@ public sealed class ModelManagerTests
     }
 
     [Fact]
+    public async Task GetStatusAsyncRejectsRequiredFileThatNormalizesToModelFolder()
+    {
+        var root = CreateTempRoot();
+        var model = CreateModel(targetFolder: "asr-fast", requiredFiles: ["."]);
+        Directory.CreateDirectory(Path.Combine(root, "asr-fast"));
+        var manager = new ModelManager(root);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => manager.GetStatusAsync(model, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task DeleteAsyncDoesNotDeleteOutsideModelsRoot()
     {
         var parent = CreateTempRoot();
@@ -144,6 +175,18 @@ public sealed class ModelManagerTests
         await Assert.ThrowsAsync<ArgumentException>(() => manager.DeleteAsync(model, CancellationToken.None));
 
         Assert.True(Directory.Exists(outside));
+    }
+
+    [Fact]
+    public async Task DeleteAsyncDoesNotDeleteModelsRootForCurrentDirectoryTargetFolder()
+    {
+        var root = CreateTempRoot();
+        var model = CreateModel(targetFolder: ".", requiredFiles: ["model.onnx"]);
+        var manager = new ModelManager(root);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => manager.DeleteAsync(model, CancellationToken.None));
+
+        Assert.True(Directory.Exists(root));
     }
 
     private static string CreateTempRoot()

@@ -16,7 +16,7 @@ public sealed class ModelManager
             throw new ArgumentException("Model target folder must be relative.", nameof(model));
         }
 
-        return GetContainedPath(ModelsRoot, model.Install.TargetFolder, nameof(model));
+        return GetContainedChildPath(ModelsRoot, model.Install.TargetFolder, nameof(model));
     }
 
     public Task<ModelInstallStatus> GetStatusAsync(ModelCatalogEntry model, CancellationToken cancellationToken)
@@ -43,7 +43,7 @@ public sealed class ModelManager
                 throw new ArgumentException("Model required file must be relative.", nameof(model));
             }
 
-            var requiredFilePath = GetContainedPath(modelPath, requiredFile, nameof(model));
+            var requiredFilePath = GetContainedChildPath(modelPath, requiredFile, nameof(model));
             if (!File.Exists(requiredFilePath))
             {
                 return Task.FromResult(ModelInstallStatus.MissingRequiredFiles);
@@ -73,12 +73,12 @@ public sealed class ModelManager
             && string.IsNullOrWhiteSpace(download.EmbeddingUrl);
     }
 
-    private static string GetContainedPath(string root, string relativePath, string parameterName)
+    private static string GetContainedChildPath(string root, string relativePath, string parameterName)
     {
         var fullRoot = Path.GetFullPath(root);
         var fullPath = Path.GetFullPath(Path.Combine(fullRoot, relativePath));
 
-        if (!IsPathInsideRoot(fullPath, fullRoot))
+        if (!IsPathStrictlyInsideRoot(fullPath, fullRoot))
         {
             throw new ArgumentException("Model path must be inside the models root.", parameterName);
         }
@@ -86,13 +86,12 @@ public sealed class ModelManager
         return fullPath;
     }
 
-    private static bool IsPathInsideRoot(string path, string root)
+    private static bool IsPathStrictlyInsideRoot(string path, string root)
     {
         var normalizedRoot = Path.TrimEndingDirectorySeparator(root);
 
-        return string.Equals(path, normalizedRoot, StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith(
-                normalizedRoot + Path.DirectorySeparatorChar,
-                StringComparison.OrdinalIgnoreCase);
+        return path.StartsWith(
+            normalizedRoot + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase);
     }
 }
