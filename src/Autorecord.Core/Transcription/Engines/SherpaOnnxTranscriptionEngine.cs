@@ -67,8 +67,8 @@ public sealed class SherpaOnnxTranscriptionEngine : ITranscriptionEngine
         config.ModelConfig.Debug = 0;
         config.DecodingMethod = "greedy_search";
 
-        var recognizer = new OfflineRecognizer(config);
-        var stream = recognizer.CreateStream();
+        using var recognizer = new OfflineRecognizer(config);
+        using var stream = recognizer.CreateStream();
         var samples = ReadPcm16MonoSamples(normalizedWavPath);
 
         stream.AcceptWaveform(SampleRate, samples);
