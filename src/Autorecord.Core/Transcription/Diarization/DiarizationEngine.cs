@@ -1,4 +1,5 @@
 using Autorecord.Core.Transcription.Results;
+using System.Globalization;
 using NAudio.Wave;
 using SherpaOnnx;
 
@@ -52,11 +53,22 @@ public sealed class DiarizationEngine : IDiarizationEngine
 
     public static IReadOnlyList<DiarizationTurn> NormalizeTurns(IEnumerable<DiarizationTurn> turns)
     {
-        var normalized = new List<DiarizationTurn>();
+        ArgumentNullException.ThrowIfNull(turns);
 
-        foreach (var turn in turns
-            .Where(turn => turn.End - turn.Start >= MinimumTurnDurationSeconds)
-            .OrderBy(turn => turn.Start))
+        var normalized = new List<DiarizationTurn>();
+        var validTurns = new List<DiarizationTurn>();
+
+        foreach (var turn in turns)
+        {
+            ValidateTurn(turn);
+
+            if (turn.End - turn.Start >= MinimumTurnDurationSeconds)
+            {
+                validTurns.Add(turn);
+            }
+        }
+
+        foreach (var turn in validTurns.OrderBy(turn => turn.Start))
         {
             if (normalized.Count == 0)
             {
@@ -77,6 +89,39 @@ public sealed class DiarizationEngine : IDiarizationEngine
         }
 
         return normalized;
+    }
+
+    private static void ValidateTurn(DiarizationTurn? turn)
+    {
+        if (turn is null)
+        {
+            throw new ArgumentException("Diarization turn cannot be null.", nameof(turn));
+        }
+
+        if (double.IsNaN(turn.Start) || double.IsInfinity(turn.Start))
+        {
+            throw new ArgumentException("Diarization turn start must be a finite timestamp.", nameof(turn));
+        }
+
+        if (double.IsNaN(turn.End) || double.IsInfinity(turn.End))
+        {
+            throw new ArgumentException("Diarization turn end must be a finite timestamp.", nameof(turn));
+        }
+
+        if (turn.Start < 0 || turn.End < 0)
+        {
+            throw new ArgumentException("Diarization turn timestamps cannot be negative.", nameof(turn));
+        }
+
+        if (turn.End < turn.Start)
+        {
+            throw new ArgumentException("Diarization turn end cannot be before start.", nameof(turn));
+        }
+
+        if (string.IsNullOrWhiteSpace(turn.SpeakerId))
+        {
+            throw new ArgumentException("Diarization turn speaker id cannot be blank.", nameof(turn));
+        }
     }
 
     private static string RequireSegmentationModelFile(string modelPath)
@@ -137,8 +182,13 @@ public sealed class DiarizationEngine : IDiarizationEngine
 
         return diarization
             .Process(samples)
-            .Select(segment => new DiarizationTurn(segment.Start, segment.End, $"S{segment.Speaker}"))
+            .Select(segment => new DiarizationTurn(segment.Start, segment.End, FormatSpeakerId(segment.Speaker)))
             .ToArray();
+    }
+
+    internal static string FormatSpeakerId(int speaker)
+    {
+        return $"SPEAKER_{speaker.ToString("00", CultureInfo.InvariantCulture)}";
     }
 
     private static float[] ReadPcm16MonoSamples(string normalizedWavPath)

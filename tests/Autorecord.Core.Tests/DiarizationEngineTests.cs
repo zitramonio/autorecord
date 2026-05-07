@@ -63,6 +63,68 @@ public sealed class DiarizationEngineTests
     }
 
     [Fact]
+    public void NormalizeTurnsThrowsWhenTurnsIsNull()
+    {
+        Assert.Throws<ArgumentNullException>(() => DiarizationEngine.NormalizeTurns(null!));
+    }
+
+    [Fact]
+    public void NormalizeTurnsThrowsWhenTurnElementIsNull()
+    {
+        var turns = new DiarizationTurn[] { null! };
+
+        Assert.Throws<ArgumentException>(() => DiarizationEngine.NormalizeTurns(turns));
+    }
+
+    [Theory]
+    [InlineData(-0.1, 1)]
+    [InlineData(0, -0.1)]
+    public void NormalizeTurnsThrowsWhenTimestampIsNegative(double start, double end)
+    {
+        var turns = new[] { new DiarizationTurn(start, end, "S0") };
+
+        Assert.Throws<ArgumentException>(() => DiarizationEngine.NormalizeTurns(turns));
+    }
+
+    [Theory]
+    [InlineData(double.NaN, 1)]
+    [InlineData(0, double.NaN)]
+    [InlineData(double.PositiveInfinity, 1)]
+    [InlineData(0, double.NegativeInfinity)]
+    public void NormalizeTurnsThrowsWhenTimestampIsNaNOrInfinity(double start, double end)
+    {
+        var turns = new[] { new DiarizationTurn(start, end, "S0") };
+
+        Assert.Throws<ArgumentException>(() => DiarizationEngine.NormalizeTurns(turns));
+    }
+
+    [Fact]
+    public void NormalizeTurnsThrowsWhenEndIsBeforeStart()
+    {
+        var turns = new[] { new DiarizationTurn(2, 1, "S0") };
+
+        Assert.Throws<ArgumentException>(() => DiarizationEngine.NormalizeTurns(turns));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData(null)]
+    public void NormalizeTurnsThrowsWhenSpeakerIdIsBlank(string? speakerId)
+    {
+        var turns = new[] { new DiarizationTurn(0, 1, speakerId!) };
+
+        Assert.Throws<ArgumentException>(() => DiarizationEngine.NormalizeTurns(turns));
+    }
+
+    [Fact]
+    public void FormatSpeakerIdUsesTwoDigitSpeakerPrefix()
+    {
+        Assert.Equal("SPEAKER_00", DiarizationEngine.FormatSpeakerId(0));
+        Assert.Equal("SPEAKER_12", DiarizationEngine.FormatSpeakerId(12));
+    }
+
+    [Fact]
     public async Task DiarizeAsyncThrowsWhenSegmentationModelIsMissing()
     {
         var root = CreateTempDirectory();
