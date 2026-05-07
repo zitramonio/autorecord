@@ -4,86 +4,168 @@
         Title="Autorecord"
         Width="720"
         Height="600">
-    <Grid Margin="16">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition />
-        </Grid.RowDefinitions>
-        <TextBlock Text="iCal-ссылка" />
-        <TextBox x:Name="CalendarUrlBox" Grid.Row="1" Margin="0,6,0,12" />
-        <Button Grid.Row="2"
-                Width="180"
-                HorizontalAlignment="Left"
-                Click="RefreshCalendar_Click">
-            Обновить календарь
-        </Button>
-        <Border Grid.Row="3"
-                Margin="0,16,0,0"
-                Padding="12"
-                BorderBrush="#CCCCCC"
-                BorderThickness="1">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <StackPanel>
-                    <TextBlock Text="Статус записи" FontWeight="SemiBold" />
-                    <TextBlock x:Name="RecordingStatusText"
-                               Margin="0,6,0,0"
-                               Text="Запись не идет" />
-                </StackPanel>
-                <Button x:Name="StartRecordingButton"
-                        Grid.Column="1"
-                        Width="130"
-                        Margin="12,0,0,0"
-                        VerticalAlignment="Center"
-                        Click="StartRecording_Click">
-                    Начать запись
+    <TabControl Margin="16">
+        <TabItem Header="Запись">
+            <Grid Margin="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition />
+                </Grid.RowDefinitions>
+                <TextBlock Text="iCal-ссылка" />
+                <TextBox x:Name="CalendarUrlBox" Grid.Row="1" Margin="0,6,0,12" />
+                <Button Grid.Row="2"
+                        Width="180"
+                        HorizontalAlignment="Left"
+                        Click="RefreshCalendar_Click">
+                    Обновить календарь
                 </Button>
-                <Button x:Name="StopRecordingButton"
-                        Grid.Column="2"
-                        Width="140"
-                        Margin="8,0,0,0"
-                        VerticalAlignment="Center"
-                        Click="StopRecording_Click">
-                    Остановить запись
+                <Border Grid.Row="3"
+                        Margin="0,16,0,0"
+                        Padding="12"
+                        BorderBrush="#CCCCCC"
+                        BorderThickness="1">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="Статус записи" FontWeight="SemiBold" />
+                            <TextBlock x:Name="RecordingStatusText"
+                                       Margin="0,6,0,0"
+                                       Text="Запись не идет" />
+                        </StackPanel>
+                        <Button x:Name="StartRecordingButton"
+                                Grid.Column="1"
+                                Width="130"
+                                Margin="12,0,0,0"
+                                VerticalAlignment="Center"
+                                Click="StartRecording_Click">
+                            Начать запись
+                        </Button>
+                        <Button x:Name="StopRecordingButton"
+                                Grid.Column="2"
+                                Width="140"
+                                Margin="8,0,0,0"
+                                VerticalAlignment="Center"
+                                Click="StopRecording_Click">
+                            Остановить запись
+                        </Button>
+                    </Grid>
+                </Border>
+                <StackPanel Grid.Row="4" Margin="0,16,0,0">
+                    <TextBlock Text="Папка сохранения" />
+                    <DockPanel Margin="0,6,0,12">
+                        <Button DockPanel.Dock="Right"
+                                Width="100"
+                                Click="ChooseFolder_Click">
+                            Выбрать
+                        </Button>
+                        <TextBox x:Name="OutputFolderBox" Margin="0,0,8,0" />
+                    </DockPanel>
+                    <CheckBox x:Name="TaggedModeBox" Content="Записывать только события с меткой" />
+                    <TextBox x:Name="EventTagBox" Margin="0,6,0,12" />
+                    <TextBlock Text="Минут тишины до запроса" />
+                    <TextBox x:Name="SilenceMinutesBox" Margin="0,6,0,12" />
+                    <TextBlock Text="Минут ожидания после ответа Нет" />
+                    <TextBox x:Name="RetryMinutesBox" Margin="0,6,0,12" />
+                    <CheckBox x:Name="KeepMicrophoneReadyBox"
+                              Margin="0,0,0,12"
+                              Content="Держать микрофон готовым для мгновенного старта" />
+                    <CheckBox x:Name="StartupBox" Content="Запускать вместе с Windows" />
+                    <Button Width="120"
+                            Margin="0,16,0,0"
+                            HorizontalAlignment="Left"
+                            Click="Save_Click">
+                        Сохранить
+                    </Button>
+                </StackPanel>
+                <TextBlock x:Name="StatusText" Grid.Row="6" VerticalAlignment="Bottom" />
+            </Grid>
+        </TabItem>
+        <TabItem Header="Транскрибация">
+            <Grid Margin="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <StackPanel>
+                    <CheckBox x:Name="AutoTranscribeBox"
+                              Content="Автоматически транскрибировать после записи" />
+                    <TextBlock Margin="0,12,0,0" Text="ASR-модель" />
+                    <ComboBox x:Name="AsrModelBox"
+                              Margin="0,6,0,0"
+                              DisplayMemberPath="DisplayName"
+                              SelectedValuePath="Id" />
+                    <CheckBox x:Name="DiarizationModeBox"
+                              Margin="0,12,0,0"
+                              Content="Определять спикеров" />
+                    <TextBlock x:Name="SelectedModelStatusText"
+                               Margin="0,12,0,0"
+                               Text="Модель не выбрана" />
+                    <ProgressBar x:Name="ModelDownloadProgress"
+                                 Height="18"
+                                 Margin="0,6,0,0"
+                                 Minimum="0"
+                                 Maximum="100" />
+                </StackPanel>
+                <WrapPanel Grid.Row="1" Margin="0,12,0,12">
+                    <Button x:Name="DownloadModelButton"
+                            Width="120"
+                            Margin="0,0,8,8"
+                            Click="DownloadModel_Click">
+                        Скачать
+                    </Button>
+                    <Button x:Name="DeleteModelButton"
+                            Width="120"
+                            Margin="0,0,8,8"
+                            Click="DeleteModel_Click">
+                        Удалить
+                    </Button>
+                    <Button x:Name="ValidateModelButton"
+                            Width="120"
+                            Margin="0,0,8,8"
+                            Click="ValidateModel_Click">
+                        Проверить
+                    </Button>
+                    <Button x:Name="OpenModelsFolderButton"
+                            Width="150"
+                            Margin="0,0,8,8"
+                            Click="OpenModelsFolder_Click">
+                        Папка моделей
+                    </Button>
+                </WrapPanel>
+                <DataGrid x:Name="TranscriptionJobsGrid"
+                          Grid.Row="2"
+                          AutoGenerateColumns="False"
+                          CanUserAddRows="False"
+                          IsReadOnly="True">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Файл" Binding="{Binding File}" />
+                        <DataGridTextColumn Header="Модель" Binding="{Binding Model}" />
+                        <DataGridTextColumn Header="Статус" Binding="{Binding Status}" />
+                        <DataGridTextColumn Header="Прогресс" Binding="{Binding Progress}" />
+                        <DataGridTextColumn Header="Создано" Binding="{Binding CreatedAt}" />
+                        <DataGridTextColumn Header="Завершено" Binding="{Binding CompletedAt}" />
+                    </DataGrid.Columns>
+                </DataGrid>
+                <Button x:Name="PickFileForTranscription"
+                        Grid.Row="3"
+                        Width="190"
+                        Margin="0,12,0,0"
+                        HorizontalAlignment="Left"
+                        Click="PickFileForTranscription_Click">
+                    Выбрать файл
                 </Button>
             </Grid>
-        </Border>
-        <StackPanel Grid.Row="4" Margin="0,16,0,0">
-            <TextBlock Text="Папка сохранения" />
-            <DockPanel Margin="0,6,0,12">
-                <Button DockPanel.Dock="Right"
-                        Width="100"
-                        Click="ChooseFolder_Click">
-                    Выбрать
-                </Button>
-                <TextBox x:Name="OutputFolderBox" Margin="0,0,8,0" />
-            </DockPanel>
-            <CheckBox x:Name="TaggedModeBox" Content="Записывать только события с меткой" />
-            <TextBox x:Name="EventTagBox" Margin="0,6,0,12" />
-            <TextBlock Text="Минут тишины до запроса" />
-            <TextBox x:Name="SilenceMinutesBox" Margin="0,6,0,12" />
-            <TextBlock Text="Минут ожидания после ответа Нет" />
-            <TextBox x:Name="RetryMinutesBox" Margin="0,6,0,12" />
-            <CheckBox x:Name="KeepMicrophoneReadyBox"
-                      Margin="0,0,0,12"
-                      Content="Держать микрофон готовым для мгновенного старта" />
-            <CheckBox x:Name="StartupBox" Content="Запускать вместе с Windows" />
-            <Button Width="120"
-                    Margin="0,16,0,0"
-                    HorizontalAlignment="Left"
-                    Click="Save_Click">
-                Сохранить
-            </Button>
-        </StackPanel>
-        <TextBlock x:Name="StatusText" Grid.Row="6" VerticalAlignment="Bottom" />
-    </Grid>
+        </TabItem>
+    </TabControl>
 </Window>

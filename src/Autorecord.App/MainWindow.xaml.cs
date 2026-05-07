@@ -19,6 +19,11 @@ public partial class MainWindow : Window
     public event EventHandler<AppSettings>? SettingsSaved;
     public event EventHandler<AppSettings>? ManualRecordingStartRequested;
     public event EventHandler? ManualRecordingStopRequested;
+    public event EventHandler? DownloadSelectedModelRequested;
+    public event EventHandler? DeleteSelectedModelRequested;
+    public event EventHandler? ValidateSelectedModelRequested;
+    public event EventHandler? OpenModelsFolderRequested;
+    public event EventHandler? PickFileForTranscriptionRequested;
 
     public bool AllowClose { get; set; }
 
@@ -93,6 +98,31 @@ public partial class MainWindow : Window
         ManualRecordingStopRequested?.Invoke(this, EventArgs.Empty);
     }
 
+    private void DownloadModel_Click(object sender, RoutedEventArgs e)
+    {
+        DownloadSelectedModelRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void DeleteModel_Click(object sender, RoutedEventArgs e)
+    {
+        DeleteSelectedModelRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ValidateModel_Click(object sender, RoutedEventArgs e)
+    {
+        ValidateSelectedModelRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OpenModelsFolder_Click(object sender, RoutedEventArgs e)
+    {
+        OpenModelsFolderRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void PickFileForTranscription_Click(object sender, RoutedEventArgs e)
+    {
+        PickFileForTranscriptionRequested?.Invoke(this, EventArgs.Empty);
+    }
+
     private void LoadIntoForm(AppSettings settings)
     {
         CalendarUrlBox.Text = settings.CalendarUrl;
@@ -130,7 +160,8 @@ public partial class MainWindow : Window
             SilencePromptMinutes = silenceMinutes,
             RetryPromptMinutes = retryMinutes,
             KeepMicrophoneReady = KeepMicrophoneReadyBox.IsChecked == true,
-            StartWithWindows = StartupBox.IsChecked == true
+            StartWithWindows = StartupBox.IsChecked == true,
+            Transcription = _settings.Transcription
         };
 
         return true;
