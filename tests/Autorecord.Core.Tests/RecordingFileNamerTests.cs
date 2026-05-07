@@ -12,7 +12,7 @@ public sealed class RecordingFileNamerTests
 
         var result = RecordingFileNamer.GetAvailablePath(dir, new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero));
 
-        Assert.Equal(Path.Combine(dir, "06.05.2026 18.42.wav"), result);
+        Assert.Equal(Path.Combine(dir, "06.05.2026 18.42.mp3"), result);
     }
 
     [Fact]
@@ -20,10 +20,22 @@ public sealed class RecordingFileNamerTests
     {
         var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "06.05.2026 18.42.wav"), "");
+        File.WriteAllText(Path.Combine(dir, "06.05.2026 18.42.mp3"), "");
 
         var result = RecordingFileNamer.GetAvailablePath(dir, new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero));
 
-        Assert.Equal(Path.Combine(dir, "06.05.2026 18.42 (2).wav"), result);
+        Assert.Equal(Path.Combine(dir, "06.05.2026 18.42 (2).mp3"), result);
+    }
+
+    [Fact]
+    public void AddsSuffixWhenTemporaryRecordingFileAlreadyExists()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "06.05.2026 18.42.recording.wav"), "");
+
+        var result = RecordingFileNamer.GetAvailablePath(dir, new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero));
+
+        Assert.Equal(Path.Combine(dir, "06.05.2026 18.42 (2).mp3"), result);
     }
 }

@@ -46,6 +46,7 @@ public partial class App : System.Windows.Application
         _recordingCoordinator = new RecordingCoordinator(() => new NaudioWavRecorder(), () => DateTimeOffset.Now);
         _recordingCoordinator.RecordingStarted += RecordingCoordinator_RecordingStarted;
         _recordingCoordinator.RecordingSaved += RecordingCoordinator_RecordingSaved;
+        _recordingCoordinator.RecordingSaveFailed += RecordingCoordinator_RecordingSaveFailed;
         _recordingCoordinator.StopPromptRequired += RecordingCoordinator_StopPromptRequired;
 
         _mainWindow = new MainWindow();
@@ -53,12 +54,16 @@ public partial class App : System.Windows.Application
         _notificationService = new WpfNotificationService(_trayIconHost);
         _mainWindow.RefreshCalendarRequested += MainWindow_RefreshCalendarRequested;
         _mainWindow.SettingsSaved += MainWindow_SettingsSaved;
+        _mainWindow.ManualRecordingStartRequested += MainWindow_ManualRecordingStartRequested;
+        _mainWindow.ManualRecordingStopRequested += MainWindow_ManualRecordingStopRequested;
 
         try
         {
             _settings = await _settingsStore.LoadAsync(_shutdown.Token);
             _mainWindow.SetSettings(_settings);
             _mainWindow.SetStatus("Настройки загружены.");
+            _ = ApplyRecorderReadinessAsync(_settings, _shutdown.Token);
+            _ = RecoverPendingRecordingsAsync(_settings.OutputFolder, _shutdown.Token);
         }
         catch (Exception ex)
         {
@@ -87,6 +92,7 @@ public partial class App : System.Windows.Application
     {
         _shutdown.Cancel();
         StopRecordingOnExit();
+        DisposeRecordingCoordinatorOnExit();
         _trayIconHost?.Dispose();
         _httpClient?.Dispose();
         _shutdown.Dispose();
@@ -102,6 +108,65 @@ public partial class App : System.Windows.Application
     private void MainWindow_SettingsSaved(object? sender, AppSettings settings)
     {
         _ = SaveSettingsAsync(settings, _shutdown.Token);
+    }
+
+    private void MainWindow_ManualRecordingStartRequested(object? sender, AppSettings settings)
+    {
+        _ = StartManualRecordingAsync(settings, _shutdown.Token);
+    }
+
+    private void MainWindow_ManualRecordingStopRequested(object? sender, EventArgs e)
+    {
+        _ = StopManualRecordingAsync(_shutdown.Token);
+    }
+
+    private async Task StartManualRecordingAsync(AppSettings settings, CancellationToken cancellationToken)
+    {
+        if (_recordingCoordinator is null)
+        {
+            return;
+        }
+
+        if (_recordingCoordinator.IsRecording)
+        {
+            SetRecordingState(true, _recordingCoordinator.CurrentSession?.CalendarEvent.Title);
+            SetStatus("Запись уже идёт.");
+            return;
+        }
+
+        try
+        {
+            _settings = settings;
+            var startsAt = DateTimeOffset.Now;
+            var manualEvent = new CalendarEvent("Ручная запись", startsAt, startsAt);
+            await _recordingCoordinator.StartAsync(manualEvent, settings, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            SetRecordingState(false);
+            SetStatus($"Не удалось начать ручную запись: {ex.Message}");
+        }
+    }
+
+    private async Task StopManualRecordingAsync(CancellationToken cancellationToken)
+    {
+        if (_recordingCoordinator?.IsRecording != true)
+        {
+            SetRecordingState(false);
+            SetStatus("Запись не идёт.");
+            return;
+        }
+
+        try
+        {
+            await _recordingCoordinator.ConfirmStopAsync(cancellationToken);
+            SetRecordingState(false, "Запись остановлена. MP3 сохраняется...");
+            SetStatus("Запись остановлена. MP3 сохраняется...");
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Не удалось остановить запись: {ex.Message}");
+        }
     }
 
     private async Task SaveSettingsAsync(AppSettings settings, CancellationToken cancellationToken)
@@ -131,6 +196,8 @@ public partial class App : System.Windows.Application
 
             await _settingsStore.SaveAsync(settings, cancellationToken);
             _settings = settings;
+            _ = ApplyRecorderReadinessAsync(settings, cancellationToken);
+            _ = RecoverPendingRecordingsAsync(settings.OutputFolder, cancellationToken);
             SetStatus("Настройки сохранены.");
             if (!string.IsNullOrWhiteSpace(settings.CalendarUrl))
             {
@@ -200,7 +267,7 @@ public partial class App : System.Windows.Application
 
     private async Task RunSchedulePollingLoopAsync(CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
         try
         {
             while (await timer.WaitForNextTickAsync(cancellationToken))
@@ -256,13 +323,23 @@ public partial class App : System.Windows.Application
     private void RecordingCoordinator_RecordingStarted(object? sender, RecordingSession session)
     {
         _notificationService?.ShowInfo("Запись началась", session.CalendarEvent.Title);
+        SetRecordingState(true, session.CalendarEvent.Title);
         SetStatus($"Запись началась: {session.CalendarEvent.Title}");
     }
 
     private void RecordingCoordinator_RecordingSaved(object? sender, RecordingSession session)
     {
         _notificationService?.ShowInfo("Запись сохранена", session.OutputPath);
+        SetRecordingState(false, $"Запись сохранена: {session.OutputPath}");
         SetStatus($"Запись сохранена: {session.OutputPath}");
+    }
+
+    private void RecordingCoordinator_RecordingSaveFailed(object? sender, RecordingSaveFailedEventArgs args)
+    {
+        var message = $"MP3 не сохранён. Резервный WAV оставлен: {args.TemporaryWavPath}. Ошибка: {args.Error.Message}";
+        _notificationService?.ShowInfo("Ошибка сохранения записи", message);
+        SetRecordingState(false, message);
+        SetStatus(message);
     }
 
     private void RecordingCoordinator_StopPromptRequired(object? sender, RecordingSession session)
@@ -291,6 +368,38 @@ public partial class App : System.Windows.Application
         }
     }
 
+    private void DisposeRecordingCoordinatorOnExit()
+    {
+        try
+        {
+            _recordingCoordinator?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Не удалось освободить аудиоустройства: {ex.Message}");
+        }
+    }
+
+    private async Task ApplyRecorderReadinessAsync(AppSettings settings, CancellationToken cancellationToken)
+    {
+        if (_recordingCoordinator is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _recordingCoordinator.ApplySettingsAsync(settings, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Не удалось подготовить микрофон: {ex.Message}");
+        }
+    }
+
     private async Task ShowStopPromptAsync(CancellationToken cancellationToken)
     {
         if (_recordingCoordinator is null)
@@ -309,6 +418,8 @@ public partial class App : System.Windows.Application
             if (dialog.Response == StopRecordingDialogResponse.Yes)
             {
                 await _recordingCoordinator.ConfirmStopAsync(cancellationToken);
+                SetRecordingState(false, "Запись остановлена. MP3 сохраняется...");
+                SetStatus("Запись остановлена. MP3 сохраняется...");
             }
             else if (dialog.Response == StopRecordingDialogResponse.No)
             {
@@ -339,6 +450,55 @@ public partial class App : System.Windows.Application
         }
 
         Dispatcher.BeginInvoke(() => _mainWindow.SetStatus(status));
+    }
+
+    private void SetRecordingState(bool isRecording, string? details = null)
+    {
+        if (_mainWindow is null)
+        {
+            return;
+        }
+
+        if (Dispatcher.CheckAccess())
+        {
+            _mainWindow.SetRecordingState(isRecording, details);
+            return;
+        }
+
+        Dispatcher.BeginInvoke(() => _mainWindow.SetRecordingState(isRecording, details));
+    }
+
+    private async Task RecoverPendingRecordingsAsync(string outputFolder, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(outputFolder))
+        {
+            return;
+        }
+
+        try
+        {
+            await NaudioWavRecorder.RecoverPendingConversionsAsync(
+                outputFolder,
+                args =>
+                {
+                    _notificationService?.ShowInfo("Запись сохранена", args.SavedOutputPath);
+                    SetStatus($"Восстановленная запись сохранена: {args.SavedOutputPath}");
+                },
+                args =>
+                {
+                    var message = $"Не удалось восстановить MP3. WAV оставлен: {args.TemporaryWavPath}. Ошибка: {args.Error.Message}";
+                    _notificationService?.ShowInfo("Ошибка восстановления записи", message);
+                    SetStatus(message);
+                },
+                cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Не удалось проверить незавершённые записи: {ex.Message}");
+        }
     }
 
     private static string GetSettingsPath()

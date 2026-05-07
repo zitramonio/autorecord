@@ -3,9 +3,10 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Autorecord"
         Width="720"
-        Height="520">
+        Height="600">
     <Grid Margin="16">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -21,7 +22,42 @@
                 Click="RefreshCalendar_Click">
             Обновить календарь
         </Button>
-        <StackPanel Grid.Row="3" Margin="0,16,0,0">
+        <Border Grid.Row="3"
+                Margin="0,16,0,0"
+                Padding="12"
+                BorderBrush="#CCCCCC"
+                BorderThickness="1">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="Статус записи" FontWeight="SemiBold" />
+                    <TextBlock x:Name="RecordingStatusText"
+                               Margin="0,6,0,0"
+                               Text="Запись не идет" />
+                </StackPanel>
+                <Button x:Name="StartRecordingButton"
+                        Grid.Column="1"
+                        Width="130"
+                        Margin="12,0,0,0"
+                        VerticalAlignment="Center"
+                        Click="StartRecording_Click">
+                    Начать запись
+                </Button>
+                <Button x:Name="StopRecordingButton"
+                        Grid.Column="2"
+                        Width="140"
+                        Margin="8,0,0,0"
+                        VerticalAlignment="Center"
+                        Click="StopRecording_Click">
+                    Остановить запись
+                </Button>
+            </Grid>
+        </Border>
+        <StackPanel Grid.Row="4" Margin="0,16,0,0">
             <TextBlock Text="Папка сохранения" />
             <DockPanel Margin="0,6,0,12">
                 <Button DockPanel.Dock="Right"
@@ -37,6 +73,9 @@
             <TextBox x:Name="SilenceMinutesBox" Margin="0,6,0,12" />
             <TextBlock Text="Минут ожидания после ответа Нет" />
             <TextBox x:Name="RetryMinutesBox" Margin="0,6,0,12" />
+            <CheckBox x:Name="KeepMicrophoneReadyBox"
+                      Margin="0,0,0,12"
+                      Content="Держать микрофон готовым для мгновенного старта" />
             <CheckBox x:Name="StartupBox" Content="Запускать вместе с Windows" />
             <Button Width="120"
                     Margin="0,16,0,0"
@@ -45,6 +84,6 @@
                 Сохранить
             </Button>
         </StackPanel>
-        <TextBlock x:Name="StatusText" Grid.Row="5" VerticalAlignment="Bottom" />
+        <TextBlock x:Name="StatusText" Grid.Row="6" VerticalAlignment="Bottom" />
     </Grid>
 </Window>

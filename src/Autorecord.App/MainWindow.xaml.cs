@@ -17,6 +17,8 @@ public partial class MainWindow : Window
 
     public event EventHandler<AppSettings>? RefreshCalendarRequested;
     public event EventHandler<AppSettings>? SettingsSaved;
+    public event EventHandler<AppSettings>? ManualRecordingStartRequested;
+    public event EventHandler? ManualRecordingStopRequested;
 
     public bool AllowClose { get; set; }
 
@@ -29,6 +31,15 @@ public partial class MainWindow : Window
     public void SetStatus(string status)
     {
         StatusText.Text = status;
+    }
+
+    public void SetRecordingState(bool isRecording, string? details = null)
+    {
+        RecordingStatusText.Text = isRecording
+            ? $"Идет запись: {details ?? "без названия"}"
+            : details ?? "Запись не идет";
+        StartRecordingButton.IsEnabled = !isRecording;
+        StopRecordingButton.IsEnabled = isRecording;
     }
 
     private void RefreshCalendar_Click(object sender, RoutedEventArgs e)
@@ -66,6 +77,22 @@ public partial class MainWindow : Window
         SettingsSaved?.Invoke(this, _settings);
     }
 
+    private void StartRecording_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryReadFromForm(out var settings, requireCalendarSettings: false))
+        {
+            return;
+        }
+
+        _settings = settings;
+        ManualRecordingStartRequested?.Invoke(this, _settings);
+    }
+
+    private void StopRecording_Click(object sender, RoutedEventArgs e)
+    {
+        ManualRecordingStopRequested?.Invoke(this, EventArgs.Empty);
+    }
+
     private void LoadIntoForm(AppSettings settings)
     {
         CalendarUrlBox.Text = settings.CalendarUrl;
@@ -74,17 +101,20 @@ public partial class MainWindow : Window
         EventTagBox.Text = settings.EventTag;
         SilenceMinutesBox.Text = settings.SilencePromptMinutes.ToString();
         RetryMinutesBox.Text = settings.RetryPromptMinutes.ToString();
+        KeepMicrophoneReadyBox.IsChecked = settings.KeepMicrophoneReady;
         StartupBox.IsChecked = settings.StartWithWindows;
+        SetRecordingState(false);
     }
 
-    private bool TryReadFromForm(out AppSettings settings)
+    private bool TryReadFromForm(out AppSettings settings, bool requireCalendarSettings = true)
     {
         settings = _settings;
         var recordingMode = TaggedModeBox.IsChecked == true ? RecordingMode.TaggedEvents : RecordingMode.AllEvents;
+        var calendarUrl = CalendarUrlBox.Text.Trim();
 
-        if (!TryReadRequiredText(CalendarUrlBox.Text, "iCal-ссылка", out var calendarUrl) ||
+        if ((requireCalendarSettings && !TryReadRequiredText(CalendarUrlBox.Text, "iCal-ссылка", out calendarUrl)) ||
             !TryReadRequiredText(OutputFolderBox.Text, "Папка сохранения", out var outputFolder) ||
-            (recordingMode == RecordingMode.TaggedEvents && !TryReadRequiredText(EventTagBox.Text, "Метка события", out _)) ||
+            (requireCalendarSettings && recordingMode == RecordingMode.TaggedEvents && !TryReadRequiredText(EventTagBox.Text, "Метка события", out _)) ||
             !TryReadPositiveMinutes(SilenceMinutesBox.Text, "Минут тишины до запроса", out var silenceMinutes) ||
             !TryReadPositiveMinutes(RetryMinutesBox.Text, "Минут ожидания после ответа Нет", out var retryMinutes))
         {
@@ -99,6 +129,7 @@ public partial class MainWindow : Window
             EventTag = EventTagBox.Text.Trim(),
             SilencePromptMinutes = silenceMinutes,
             RetryPromptMinutes = retryMinutes,
+            KeepMicrophoneReady = KeepMicrophoneReadyBox.IsChecked == true,
             StartWithWindows = StartupBox.IsChecked == true
         };
 

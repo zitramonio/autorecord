@@ -22,7 +22,7 @@ public sealed class RecordingCoordinatorTests
 
         await coordinator.StartAsync(calendarEvent, settings, CancellationToken.None);
 
-        var expectedPath = Path.Combine(temp.Path, "06.05.2026 18.42.wav");
+        var expectedPath = Path.Combine(temp.Path, "06.05.2026 18.42.mp3");
         Assert.True(coordinator.IsRecording);
         Assert.NotNull(coordinator.CurrentSession);
         Assert.Equal(calendarEvent, coordinator.CurrentSession.CalendarEvent);
@@ -55,6 +55,58 @@ public sealed class RecordingCoordinatorTests
     }
 
     [Fact]
+    public async Task ApplySettingsPreparesRecorderWhenKeepMicrophoneReadyEnabled()
+    {
+        var now = new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero);
+        var recorder = new FakeAudioRecorder();
+        var factoryCalls = 0;
+        var coordinator = new RecordingCoordinator(
+            () =>
+            {
+                factoryCalls++;
+                return recorder;
+            },
+            () => now);
+
+        await coordinator.ApplySettingsAsync(new AppSettings { KeepMicrophoneReady = true }, CancellationToken.None);
+
+        Assert.Equal(1, factoryCalls);
+        Assert.Equal(1, recorder.PrepareCalls);
+        Assert.Equal(0, recorder.DisposeCalls);
+    }
+
+    [Fact]
+    public async Task ConfirmStopKeepsPreparedRecorderAliveWhenKeepMicrophoneReadyEnabled()
+    {
+        var now = new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero);
+        using var temp = new TempFolder();
+        var recorder = new FakeAudioRecorder();
+        var coordinator = new RecordingCoordinator(() => recorder, () => now);
+        var settings = CreateSettings(temp.Path) with { KeepMicrophoneReady = true };
+
+        await coordinator.ApplySettingsAsync(settings, CancellationToken.None);
+        await coordinator.StartAsync(CreateEvent(now), settings, CancellationToken.None);
+        await coordinator.ConfirmStopAsync(CancellationToken.None);
+
+        Assert.False(coordinator.IsRecording);
+        Assert.Equal(0, recorder.DisposeCalls);
+        Assert.Equal(1, recorder.StopCalls);
+    }
+
+    [Fact]
+    public async Task ApplySettingsDisposesPreparedRecorderWhenKeepMicrophoneReadyDisabled()
+    {
+        var now = new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero);
+        var recorder = new FakeAudioRecorder();
+        var coordinator = new RecordingCoordinator(() => recorder, () => now);
+
+        await coordinator.ApplySettingsAsync(new AppSettings { KeepMicrophoneReady = true }, CancellationToken.None);
+        await coordinator.ApplySettingsAsync(new AppSettings { KeepMicrophoneReady = false }, CancellationToken.None);
+
+        Assert.Equal(1, recorder.DisposeCalls);
+    }
+
+    [Fact]
     public async Task RecordingStartedHandlerCanStopWithoutDeadlock()
     {
         var now = new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero);
@@ -77,7 +129,7 @@ public sealed class RecordingCoordinatorTests
     }
 
     [Fact]
-    public async Task ConfirmStopStopsDisposesAndRaisesSaved()
+    public async Task ConfirmStopStopsDisposesAndRaisesSavedAfterRecorderReportsSaved()
     {
         var now = new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero);
         using var temp = new TempFolder();
@@ -95,7 +147,35 @@ public sealed class RecordingCoordinatorTests
         Assert.Null(coordinator.CurrentSession);
         Assert.Equal(1, recorder.StopCalls);
         Assert.Equal(1, recorder.DisposeCalls);
+        Assert.Null(saved);
+
+        recorder.RaiseFileSaved(session!.OutputPath);
+
         Assert.Same(session, saved);
+    }
+
+    [Fact]
+    public async Task ConfirmStopRaisesSaveFailedWhenRecorderReportsFailure()
+    {
+        var now = new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero);
+        using var temp = new TempFolder();
+        var recorder = new FakeAudioRecorder();
+        var coordinator = new RecordingCoordinator(() => recorder, () => now);
+        RecordingSaveFailedEventArgs? failed = null;
+
+        coordinator.RecordingSaveFailed += (_, args) => failed = args;
+
+        await coordinator.StartAsync(CreateEvent(now), CreateSettings(temp.Path), CancellationToken.None);
+        var session = coordinator.CurrentSession;
+        await coordinator.ConfirmStopAsync(CancellationToken.None);
+
+        var error = new InvalidOperationException("encode failed");
+        recorder.RaiseFileSaveFailed(session!.OutputPath, @"C:\temp\meeting.recording.wav", error);
+
+        Assert.NotNull(failed);
+        Assert.Same(session, failed.Session);
+        Assert.Equal(@"C:\temp\meeting.recording.wav", failed.TemporaryWavPath);
+        Assert.Same(error, failed.Error);
     }
 
     [Fact]
@@ -255,6 +335,7 @@ public sealed class RecordingCoordinatorTests
         allowStart.SetResult();
         await startTask;
         await stopTask;
+        recorder.RaiseFileSaved(recorder.StartedPath!);
 
         Assert.False(coordinator.IsRecording);
         Assert.Null(coordinator.CurrentSession);
@@ -409,16 +490,21 @@ public sealed class RecordingCoordinatorTests
         {
             OutputFolder = outputFolder,
             SilencePromptMinutes = 1,
-            RetryPromptMinutes = 5
+            RetryPromptMinutes = 5,
+            KeepMicrophoneReady = false
         };
 
     private sealed class FakeAudioRecorder : IAudioRecorder
     {
         public event EventHandler<AudioLevel>? LevelChanged;
+        public event EventHandler<AudioFileSavedEventArgs>? FileSaved;
+        public event EventHandler<AudioFileSaveFailedEventArgs>? FileSaveFailed;
 
         public int DisposeCalls { get; private set; }
+        public int PrepareCalls { get; private set; }
         public string? StartedPath { get; private set; }
         public int StartCalls { get; private set; }
+        public Func<CancellationToken, Task>? PrepareHandler { get; init; }
         public Func<string, CancellationToken, Task>? StartHandler { get; init; }
         public int StopCalls { get; private set; }
         public Func<CancellationToken, Task>? StopHandler { get; init; }
@@ -427,6 +513,12 @@ public sealed class RecordingCoordinatorTests
         {
             DisposeCalls++;
             return ValueTask.CompletedTask;
+        }
+
+        public Task PrepareAsync(CancellationToken cancellationToken)
+        {
+            PrepareCalls++;
+            return PrepareHandler?.Invoke(cancellationToken) ?? Task.CompletedTask;
         }
 
         public Task StartAsync(string outputPath, CancellationToken cancellationToken)
@@ -443,6 +535,12 @@ public sealed class RecordingCoordinatorTests
         }
 
         public void RaiseLevel(AudioLevel level) => LevelChanged?.Invoke(this, level);
+
+        public void RaiseFileSaved(string outputPath) =>
+            FileSaved?.Invoke(this, new AudioFileSavedEventArgs(outputPath, outputPath, $"{outputPath}.recording.wav"));
+
+        public void RaiseFileSaveFailed(string outputPath, string temporaryWavPath, Exception error) =>
+            FileSaveFailed?.Invoke(this, new AudioFileSaveFailedEventArgs(outputPath, temporaryWavPath, error));
     }
 
     private sealed class TempFolder : IDisposable

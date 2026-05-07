@@ -4,6 +4,8 @@ namespace Autorecord.Core.Scheduling;
 
 public static class ScheduleMonitor
 {
+    private static readonly TimeSpan StartLeadTime = TimeSpan.FromSeconds(3);
+
     public static CalendarEvent? FindDueEvent(
         IEnumerable<CalendarEvent> events,
         DateTimeOffset now,
@@ -20,7 +22,7 @@ public static class ScheduleMonitor
         return events
             .Where(e => e.StartsAt >= startBoundary)
             .Where(e => handledStartsAt is null || !handledStartsAt.Contains(e.StartsAt))
-            .Where(e => e.StartsAt <= now && e.StartsAt >= now.AddMinutes(-1))
+            .Where(e => e.StartsAt <= now.Add(StartLeadTime) && e.StartsAt >= now.AddMinutes(-1))
             .OrderBy(e => e.StartsAt)
             .FirstOrDefault();
     }

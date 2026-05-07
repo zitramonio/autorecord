@@ -21,6 +21,35 @@ public sealed class ScheduleMonitorTests
     }
 
     [Fact]
+    public void FindsEventStartingWithinWarmupLeadTime()
+    {
+        var now = new DateTimeOffset(2026, 5, 6, 18, 42, 10, TimeSpan.Zero);
+        var events = new[]
+        {
+            new CalendarEvent("Call", now.AddSeconds(3), now.AddHours(1))
+        };
+
+        var due = ScheduleMonitor.FindDueEvent(events, now, false);
+
+        Assert.NotNull(due);
+        Assert.Equal("Call", due.Title);
+    }
+
+    [Fact]
+    public void DoesNotFindEventStartingAfterWarmupLeadTime()
+    {
+        var now = new DateTimeOffset(2026, 5, 6, 18, 42, 10, TimeSpan.Zero);
+        var events = new[]
+        {
+            new CalendarEvent("Call", now.AddSeconds(4), now.AddHours(1))
+        };
+
+        var due = ScheduleMonitor.FindDueEvent(events, now, false);
+
+        Assert.Null(due);
+    }
+
+    [Fact]
     public void DoesNotReturnAlreadyHandledEventStart()
     {
         var firstTick = new DateTimeOffset(2026, 5, 6, 18, 42, 10, TimeSpan.Zero);

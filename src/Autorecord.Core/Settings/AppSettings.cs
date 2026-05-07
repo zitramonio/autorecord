@@ -14,5 +14,6 @@ public sealed record AppSettings
     public string EventTag { get; init; } = "record";
     public int SilencePromptMinutes { get; init; } = 1;
     public int RetryPromptMinutes { get; init; } = 5;
+    public bool KeepMicrophoneReady { get; init; } = true;
     public bool StartWithWindows { get; init; }
 }
