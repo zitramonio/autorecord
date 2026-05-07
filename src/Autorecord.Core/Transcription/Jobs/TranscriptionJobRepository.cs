@@ -52,8 +52,28 @@ public sealed class TranscriptionJobRepository
             Directory.CreateDirectory(directory);
         }
 
-        await using var stream = File.Create(_path);
-        await JsonSerializer.SerializeAsync(stream, jobs, JsonOptions, cancellationToken);
+        var tempPath = Path.Combine(
+            string.IsNullOrWhiteSpace(directory) ? "." : directory,
+            $"{Path.GetFileName(_path)}.{Guid.NewGuid():N}.tmp");
+
+        try
+        {
+            await using (var stream = File.Create(tempPath))
+            {
+                await JsonSerializer.SerializeAsync(stream, jobs, JsonOptions, cancellationToken);
+            }
+
+            File.Move(tempPath, _path, overwrite: true);
+        }
+        catch
+        {
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+
+            throw;
+        }
     }
 
     private static TranscriptionJob RestoreInterruptedJob(TranscriptionJob job)

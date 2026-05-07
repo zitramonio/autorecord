@@ -38,6 +38,32 @@ public sealed class TranscriptionJobRepositoryTests
     }
 
     [Fact]
+    public async Task SaveCancellationDoesNotCorruptExistingFile()
+    {
+        var path = CreateTempPath();
+        var repository = new TranscriptionJobRepository(path);
+        var originalJob = CreateJob();
+        var replacementJob = CreateJob() with
+        {
+            Id = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            InputFilePath = "C:\\Records\\replacement.wav"
+        };
+        using var cancellation = new CancellationTokenSource();
+
+        await repository.SaveAsync([originalJob], CancellationToken.None);
+        await cancellation.CancelAsync();
+
+        var exception = await Record.ExceptionAsync(
+            () => repository.SaveAsync([replacementJob], cancellation.Token));
+        var loaded = await repository.LoadAsync(CancellationToken.None);
+
+        Assert.IsAssignableFrom<OperationCanceledException>(exception);
+        var loadedJob = Assert.Single(loaded);
+        Assert.Equal(originalJob.Id, loadedJob.Id);
+        Assert.Equal(originalJob.InputFilePath, loadedJob.InputFilePath);
+    }
+
+    [Fact]
     public async Task LoadConvertsRunningJobsToPending()
     {
         var path = CreateTempPath();
