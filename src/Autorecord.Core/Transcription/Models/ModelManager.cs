@@ -4,14 +4,19 @@ public sealed class ModelManager
 {
     public ModelManager(string modelsRoot)
     {
-        ModelsRoot = modelsRoot;
+        ModelsRoot = Path.GetFullPath(modelsRoot);
     }
 
     public string ModelsRoot { get; }
 
     public string GetModelPath(ModelCatalogEntry model)
     {
-        return Path.Combine(ModelsRoot, model.Install.TargetFolder);
+        if (Path.IsPathRooted(model.Install.TargetFolder))
+        {
+            throw new ArgumentException("Model target folder must be relative.", nameof(model));
+        }
+
+        return GetContainedPath(ModelsRoot, model.Install.TargetFolder, nameof(model));
     }
 
     public Task<ModelInstallStatus> GetStatusAsync(ModelCatalogEntry model, CancellationToken cancellationToken)
@@ -33,7 +38,13 @@ public sealed class ModelManager
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (!File.Exists(Path.Combine(modelPath, requiredFile)))
+            if (Path.IsPathRooted(requiredFile))
+            {
+                throw new ArgumentException("Model required file must be relative.", nameof(model));
+            }
+
+            var requiredFilePath = GetContainedPath(modelPath, requiredFile, nameof(model));
+            if (!File.Exists(requiredFilePath))
             {
                 return Task.FromResult(ModelInstallStatus.MissingRequiredFiles);
             }
@@ -60,5 +71,28 @@ public sealed class ModelManager
         return string.IsNullOrWhiteSpace(download.Url)
             && string.IsNullOrWhiteSpace(download.SegmentationUrl)
             && string.IsNullOrWhiteSpace(download.EmbeddingUrl);
+    }
+
+    private static string GetContainedPath(string root, string relativePath, string parameterName)
+    {
+        var fullRoot = Path.GetFullPath(root);
+        var fullPath = Path.GetFullPath(Path.Combine(fullRoot, relativePath));
+
+        if (!IsPathInsideRoot(fullPath, fullRoot))
+        {
+            throw new ArgumentException("Model path must be inside the models root.", parameterName);
+        }
+
+        return fullPath;
+    }
+
+    private static bool IsPathInsideRoot(string path, string root)
+    {
+        var normalizedRoot = Path.TrimEndingDirectorySeparator(root);
+
+        return string.Equals(path, normalizedRoot, StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith(
+                normalizedRoot + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -84,6 +84,68 @@ public sealed class ModelManagerTests
         Assert.False(Directory.Exists(modelPath));
     }
 
+    [Fact]
+    public void GetModelPathRejectsParentTraversalTargetFolder()
+    {
+        var root = CreateTempRoot();
+        var model = CreateModel(targetFolder: Path.Combine("..", "outside"), requiredFiles: ["model.onnx"]);
+        var manager = new ModelManager(root);
+
+        Assert.Throws<ArgumentException>(() => manager.GetModelPath(model));
+    }
+
+    [Fact]
+    public void GetModelPathRejectsRootedTargetFolder()
+    {
+        var root = CreateTempRoot();
+        var model = CreateModel(targetFolder: Path.Combine(root, "outside"), requiredFiles: ["model.onnx"]);
+        var manager = new ModelManager(root);
+
+        Assert.Throws<ArgumentException>(() => manager.GetModelPath(model));
+    }
+
+    [Fact]
+    public async Task GetStatusAsyncRejectsParentTraversalRequiredFile()
+    {
+        var root = CreateTempRoot();
+        var model = CreateModel(
+            targetFolder: "asr-fast",
+            requiredFiles: [Path.Combine("..", "outside.txt")]);
+        Directory.CreateDirectory(Path.Combine(root, "asr-fast"));
+        var manager = new ModelManager(root);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => manager.GetStatusAsync(model, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task GetStatusAsyncRejectsRootedRequiredFile()
+    {
+        var root = CreateTempRoot();
+        var model = CreateModel(
+            targetFolder: "asr-fast",
+            requiredFiles: [Path.Combine(root, "outside.txt")]);
+        Directory.CreateDirectory(Path.Combine(root, "asr-fast"));
+        var manager = new ModelManager(root);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => manager.GetStatusAsync(model, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task DeleteAsyncDoesNotDeleteOutsideModelsRoot()
+    {
+        var parent = CreateTempRoot();
+        var root = Path.Combine(parent, "models");
+        var outside = Path.Combine(parent, "outside");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(outside);
+        var model = CreateModel(targetFolder: Path.Combine("..", "outside"), requiredFiles: ["model.onnx"]);
+        var manager = new ModelManager(root);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => manager.DeleteAsync(model, CancellationToken.None));
+
+        Assert.True(Directory.Exists(outside));
+    }
+
     private static string CreateTempRoot()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
