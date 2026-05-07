@@ -115,6 +115,46 @@ public sealed class TranscriptExporterTests
     }
 
     [Fact]
+    public async Task ExportAsyncLeavesNoTempFilesAfterNonOverwrite()
+    {
+        var outputDirectory = CreateTempDirectory();
+        var exporter = new TranscriptExporter();
+
+        await exporter.ExportAsync(
+            CreateDocument(),
+            outputDirectory,
+            [TranscriptOutputFormat.Txt],
+            overwrite: false,
+            CancellationToken.None);
+
+        Assert.Empty(Directory.EnumerateFiles(outputDirectory, "*.tmp"));
+        Assert.True(File.Exists(Path.Combine(outputDirectory, "meeting.txt")));
+    }
+
+    [Fact]
+    public async Task ExportAsyncCancellationLeavesNoPartialFinalFileOrTempFiles()
+    {
+        var outputDirectory = CreateTempDirectory();
+        using var cancellation = new CancellationTokenSource();
+        var exporter = new TranscriptExporter();
+        await cancellation.CancelAsync();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => exporter.ExportAsync(
+                CreateDocument(),
+                outputDirectory,
+                [TranscriptOutputFormat.Txt],
+                overwrite: false,
+                cancellation.Token));
+
+        Assert.False(File.Exists(Path.Combine(outputDirectory, "meeting.txt")));
+        if (Directory.Exists(outputDirectory))
+        {
+            Assert.Empty(Directory.EnumerateFiles(outputDirectory, "*.tmp"));
+        }
+    }
+
+    [Fact]
     public async Task ExportAsyncWritesOnlySelectedFormats()
     {
         var outputDirectory = CreateTempDirectory();
@@ -192,6 +232,20 @@ public sealed class TranscriptExporterTests
             () => exporter.ExportAsync(CreateDocument(), " ", [TranscriptOutputFormat.Txt], false, CancellationToken.None));
     }
 
+    [Theory]
+    [InlineData(-0.1)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public async Task ExportAsyncRejectsInvalidDuration(double durationSec)
+    {
+        var exporter = new TranscriptExporter();
+        var document = CreateDocument() with { DurationSec = durationSec };
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => exporter.ExportAsync(document, CreateTempDirectory(), [TranscriptOutputFormat.Txt], false, CancellationToken.None));
+    }
+
     [Fact]
     public async Task ExportAsyncRejectsInvalidSegment()
     {
@@ -202,6 +256,51 @@ public sealed class TranscriptExporterTests
             [
                 new TranscriptSegment(1, 2.0, 1.0, "speaker-1", "Speaker 1", "bad timing", 0.9)
             ]
+        };
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => exporter.ExportAsync(document, CreateTempDirectory(), [TranscriptOutputFormat.Txt], false, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(-0.1, 6.8)]
+    [InlineData(1.2, -0.1)]
+    [InlineData(double.NaN, 6.8)]
+    [InlineData(1.2, double.NaN)]
+    [InlineData(double.PositiveInfinity, 6.8)]
+    [InlineData(1.2, double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity, 6.8)]
+    [InlineData(1.2, double.NegativeInfinity)]
+    public async Task ExportAsyncRejectsInvalidSegmentTimestamps(double start, double end)
+    {
+        var exporter = new TranscriptExporter();
+        var document = CreateDocument() with
+        {
+            Segments =
+            [
+                new TranscriptSegment(1, start, end, "speaker-1", "Speaker 1", "Привет, это тест.", 0.95)
+            ]
+        };
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => exporter.ExportAsync(document, CreateTempDirectory(), [TranscriptOutputFormat.Txt], false, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(-0.1, 6.8)]
+    [InlineData(1.2, -0.1)]
+    [InlineData(double.NaN, 6.8)]
+    [InlineData(1.2, double.NaN)]
+    [InlineData(double.PositiveInfinity, 6.8)]
+    [InlineData(1.2, double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity, 6.8)]
+    [InlineData(1.2, double.NegativeInfinity)]
+    public async Task ExportAsyncRejectsInvalidRawDiarizationTimestamps(double start, double end)
+    {
+        var exporter = new TranscriptExporter();
+        var document = CreateDocument() with
+        {
+            RawDiarizationSegments = [new DiarizationTurn(start, end, "speaker-1")]
         };
 
         await Assert.ThrowsAsync<ArgumentException>(

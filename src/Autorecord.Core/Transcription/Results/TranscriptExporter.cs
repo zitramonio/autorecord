@@ -74,6 +74,7 @@ public sealed class TranscriptExporter
         RequireNonBlank(outputDirectory, nameof(outputDirectory));
         RequireNonBlank(document.AsrModelId, nameof(TranscriptDocument.AsrModelId));
         RequireNonBlank(document.AsrModelDisplayName, nameof(TranscriptDocument.AsrModelDisplayName));
+        RequireNonNegativeFinite(document.DurationSec, nameof(TranscriptDocument.DurationSec));
 
         if (formats.Count == 0)
         {
@@ -126,6 +127,8 @@ public sealed class TranscriptExporter
                 throw new ArgumentException("Transcript segment end must be greater than or equal to start.", nameof(document));
             }
 
+            RequireNonNegativeFinite(segment.Start, nameof(TranscriptSegment.Start));
+            RequireNonNegativeFinite(segment.End, nameof(TranscriptSegment.End));
             RequireNonBlank(segment.SpeakerId, nameof(TranscriptSegment.SpeakerId));
             RequireNonBlank(segment.SpeakerLabel, nameof(TranscriptSegment.SpeakerLabel));
             RequireNonBlank(segment.Text, nameof(TranscriptSegment.Text));
@@ -143,6 +146,8 @@ public sealed class TranscriptExporter
                 throw new ArgumentException("Raw diarization segment end must be greater than or equal to start.", nameof(document));
             }
 
+            RequireNonNegativeFinite(turn.Start, nameof(DiarizationTurn.Start));
+            RequireNonNegativeFinite(turn.End, nameof(DiarizationTurn.End));
             RequireNonBlank(turn.SpeakerId, nameof(DiarizationTurn.SpeakerId));
         }
     }
@@ -258,19 +263,13 @@ public sealed class TranscriptExporter
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (!overwrite)
-        {
-            await File.WriteAllTextAsync(path, content, Utf8NoBom, cancellationToken);
-            return;
-        }
-
         var directory = Path.GetDirectoryName(path)!;
         var tempPath = Path.Combine(directory, $"{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
 
         try
         {
             await File.WriteAllTextAsync(tempPath, content, Utf8NoBom, cancellationToken);
-            File.Move(tempPath, path, overwrite: true);
+            File.Move(tempPath, path, overwrite);
         }
         catch
         {
@@ -318,6 +317,14 @@ public sealed class TranscriptExporter
         if (string.IsNullOrWhiteSpace(value))
         {
             throw new ArgumentException($"Transcript field '{name}' must not be empty.", name);
+        }
+    }
+
+    private static void RequireNonNegativeFinite(double value, string name)
+    {
+        if (!double.IsFinite(value) || value < 0)
+        {
+            throw new ArgumentException($"Transcript field '{name}' must be finite and non-negative.", name);
         }
     }
 }
