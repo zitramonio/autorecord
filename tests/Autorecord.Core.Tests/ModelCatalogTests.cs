@@ -110,6 +110,73 @@ public sealed class ModelCatalogTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => ModelCatalog.LoadAsync(path, CancellationToken.None));
     }
 
+    [Theory]
+    [InlineData("null")]
+    [InlineData("""{ "models": null }""")]
+    public async Task LoadAsyncRejectsNullModelsArray(string json)
+    {
+        var path = await WriteCatalogAsync(json);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => ModelCatalog.LoadAsync(path, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("""{ "models": [null] }""")]
+    [InlineData("""{ "models": [{ "id": "asr", "displayName": "ASR", "type": "asr", "engine": "sherpa-onnx", "download": null, "install": { "targetFolder": "asr" } }] }""")]
+    [InlineData("""{ "models": [{ "id": "asr", "displayName": "ASR", "type": "asr", "engine": "sherpa-onnx", "install": null }] }""")]
+    [InlineData("""{ "models": [{ "id": "asr", "displayName": "ASR", "type": "asr", "engine": "sherpa-onnx", "install": { "targetFolder": "asr" }, "runtime": null }] }""")]
+    public async Task LoadAsyncRejectsNullNestedObjects(string json)
+    {
+        var path = await WriteCatalogAsync(json);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => ModelCatalog.LoadAsync(path, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("""{ "models": [{ "id": "asr", "displayName": "ASR", "type": "asr", "engine": "sherpa-onnx", "install": { "targetFolder": "asr", "requiredFiles": null } }] }""")]
+    [InlineData("""{ "models": [{ "id": "asr", "displayName": "ASR", "type": "asr", "engine": "sherpa-onnx", "install": { "targetFolder": "asr", "requiredFiles": [null] } }] }""")]
+    [InlineData("""{ "models": [{ "id": "asr", "displayName": "ASR", "type": "asr", "engine": "sherpa-onnx", "install": { "targetFolder": "asr", "requiredFiles": [""] } }] }""")]
+    [InlineData("""{ "models": [{ "id": "asr", "displayName": "ASR", "type": "asr", "engine": "sherpa-onnx", "install": { "targetFolder": "asr", "requiredFiles": [" model.onnx"] } }] }""")]
+    public async Task LoadAsyncRejectsNullRequiredFiles(string json)
+    {
+        var path = await WriteCatalogAsync(json);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => ModelCatalog.LoadAsync(path, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(" id", "Name", "asr", "sherpa-onnx", "folder")]
+    [InlineData("id", "Name ", "asr", "sherpa-onnx", "folder")]
+    [InlineData("id", "Name", " asr", "sherpa-onnx", "folder")]
+    [InlineData("id", "Name", "asr", "sherpa-onnx ", "folder")]
+    [InlineData("id", "Name", "asr", "sherpa-onnx", " folder")]
+    public async Task LoadAsyncRejectsWhitespaceInModelId(
+        string id,
+        string displayName,
+        string type,
+        string engine,
+        string targetFolder)
+    {
+        var path = await WriteCatalogAsync(
+            $$"""
+            {
+              "models": [
+                {
+                  "id": "{{id}}",
+                  "displayName": "{{displayName}}",
+                  "type": "{{type}}",
+                  "engine": "{{engine}}",
+                  "install": {
+                    "targetFolder": "{{targetFolder}}"
+                  }
+                }
+              ]
+            }
+            """);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => ModelCatalog.LoadAsync(path, CancellationToken.None));
+    }
+
     [Fact]
     public async Task GetRequiredMissingIdThrowsInvalidOperationException()
     {
@@ -135,5 +202,13 @@ public sealed class ModelCatalogTests
         var catalog = await ModelCatalog.LoadAsync(path, CancellationToken.None);
 
         Assert.Throws<InvalidOperationException>(() => catalog.GetRequired("missing"));
+    }
+
+    private static async Task<string> WriteCatalogAsync(string json)
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "catalog.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, json);
+        return path;
     }
 }
