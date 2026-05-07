@@ -64,6 +64,24 @@ public sealed class ModelDownloadServiceTests
     }
 
     [Fact]
+    public async Task DownloadAsyncDeletesTempFileOnCancellation()
+    {
+        var root = CreateTempRoot();
+        using var cancellation = new CancellationTokenSource();
+        var service = CreateService(
+            root,
+            _ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StreamContent(new CancelingReadStream(new byte[] { 1, 2, 3 }, cancellation.Cancel))
+            });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => service.DownloadAsync(CreateModel(id: "asr-fast"), null, cancellation.Token));
+
+        Assert.Empty(Directory.GetFiles(root, "*.download"));
+    }
+
+    [Fact]
     public async Task DownloadAsyncThrowsWhenDownloadUnavailable()
     {
         var service = CreateService(
@@ -181,6 +199,47 @@ public sealed class ModelDownloadServiceTests
 
             _hasRead = true;
             firstChunk.CopyTo(buffer);
+            return ValueTask.FromResult(firstChunk.Length);
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class CancelingReadStream(byte[] firstChunk, Action cancel) : Stream
+    {
+        private bool _hasRead;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            if (_hasRead)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                throw new OperationCanceledException(cancellationToken);
+            }
+
+            _hasRead = true;
+            firstChunk.CopyTo(buffer);
+            cancel();
             return ValueTask.FromResult(firstChunk.Length);
         }
 
