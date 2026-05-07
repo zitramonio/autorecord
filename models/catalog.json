@@ -1,0 +1,121 @@
+{
+  "models": [
+    {
+      "id": "sherpa-gigaam-v2-ru-fast",
+      "displayName": "Русский — быстро",
+      "description": "Быстрая русская ASR-модель GigaAM v2 для sherpa-onnx.",
+      "type": "asr",
+      "engine": "sherpa-onnx",
+      "language": "ru",
+      "version": "2025-04-19",
+      "sizeMb": null,
+      "requiresDiarization": false,
+      "download": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-ctc-giga-am-v2-russian-2025-04-19.tar.bz2",
+        "segmentationUrl": null,
+        "embeddingUrl": null,
+        "archiveType": "tar.bz2",
+        "sha256": null
+      },
+      "install": {
+        "targetFolder": "sherpa-gigaam-v2-ru-fast",
+        "requiredFiles": [
+          "model.int8.onnx",
+          "tokens.txt"
+        ]
+      },
+      "runtime": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "device": "cpu"
+      }
+    },
+    {
+      "id": "gigaam-v3-ru-quality",
+      "displayName": "Русский — качество",
+      "description": "Качественная русская ASR-модель GigaAM v3.",
+      "type": "asr",
+      "engine": "gigaam-v3",
+      "language": "ru",
+      "version": "v3",
+      "sizeMb": null,
+      "requiresDiarization": false,
+      "download": {
+        "url": null,
+        "segmentationUrl": null,
+        "embeddingUrl": null,
+        "archiveType": null,
+        "sha256": null
+      },
+      "install": {
+        "targetFolder": "gigaam-v3-ru-quality",
+        "requiredFiles": []
+      },
+      "runtime": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "device": "cpu"
+      }
+    },
+    {
+      "id": "sherpa-diarization-pyannote-fast",
+      "displayName": "Спикеры — быстро",
+      "description": "Быстрая diarization-модель pyannote для sherpa-onnx.",
+      "type": "diarization",
+      "engine": "sherpa-onnx",
+      "language": "ru",
+      "version": "3.0",
+      "sizeMb": null,
+      "requiresDiarization": false,
+      "download": {
+        "url": null,
+        "segmentationUrl": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+        "embeddingUrl": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx",
+        "archiveType": null,
+        "sha256": null
+      },
+      "install": {
+        "targetFolder": "sherpa-diarization-pyannote-fast",
+        "requiredFiles": [
+          "model.int8.onnx",
+          "3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx"
+        ]
+      },
+      "runtime": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "device": "cpu"
+      }
+    },
+    {
+      "id": "sherpa-diarization-pyannote-quality",
+      "displayName": "Спикеры — качество",
+      "description": "Качественная diarization-модель pyannote для sherpa-onnx.",
+      "type": "diarization",
+      "engine": "sherpa-onnx",
+      "language": "ru",
+      "version": "3.0",
+      "sizeMb": null,
+      "requiresDiarization": false,
+      "download": {
+        "url": null,
+        "segmentationUrl": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+        "embeddingUrl": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx",
+        "archiveType": null,
+        "sha256": null
+      },
+      "install": {
+        "targetFolder": "sherpa-diarization-pyannote-quality",
+        "requiredFiles": [
+          "model.onnx",
+          "3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx"
+        ]
+      },
+      "runtime": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "device": "cpu"
+      }
+    }
+  ]
+}
