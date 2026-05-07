@@ -70,6 +70,36 @@ public sealed class SettingsStoreTests
     }
 
     [Fact]
+    public async Task LoadUsesDefaultTranscriptionSettingsWhenSectionIsMissing()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(
+            path,
+            """
+            {
+              "CalendarUrl": "https://example.com/calendar.ics",
+              "OutputFolder": "C:\\Records",
+              "RecordingMode": 1,
+              "EventTag": "record",
+              "SilencePromptMinutes": 2,
+              "RetryPromptMinutes": 10,
+              "KeepMicrophoneReady": true,
+              "StartWithWindows": true
+            }
+            """);
+        var store = new SettingsStore(path);
+
+        var loaded = await store.LoadAsync(CancellationToken.None);
+
+        Assert.Equal(new TranscriptionSettings(), loaded.Transcription);
+        Assert.Equal("sherpa-gigaam-v2-ru-fast", loaded.Transcription.SelectedAsrModelId);
+        Assert.Equal(
+            [TranscriptOutputFormat.Txt, TranscriptOutputFormat.Markdown, TranscriptOutputFormat.Srt, TranscriptOutputFormat.Json],
+            loaded.Transcription.OutputFormats);
+    }
+
+    [Fact]
     public async Task SaveRejectsCustomTranscriptFolderWithoutPath()
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
