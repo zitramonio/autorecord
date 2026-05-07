@@ -55,5 +55,40 @@ public sealed class SettingsStore
         {
             throw new ArgumentOutOfRangeException(nameof(settings), "Recording mode must be known.");
         }
+
+        var transcription = settings.Transcription;
+        if (!Enum.IsDefined(transcription.OutputFolderMode))
+        {
+            throw new ArgumentOutOfRangeException(nameof(settings), "Transcript output folder mode must be known.");
+        }
+
+        if (transcription.OutputFolderMode == TranscriptOutputFolderMode.CustomFolder
+            && string.IsNullOrWhiteSpace(transcription.CustomOutputFolder))
+        {
+            throw new ArgumentException("Custom transcript output folder must be set.", nameof(settings));
+        }
+
+        if (transcription.NumSpeakers is < 1 or > 6)
+        {
+            throw new ArgumentOutOfRangeException(nameof(settings), "Speaker count must be between 1 and 6.");
+        }
+
+        if (transcription.ClusterThreshold is <= 0 or > 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(settings), "Cluster threshold must be greater than 0 and no more than 1.");
+        }
+
+        if (transcription.OutputFormats.Count == 0)
+        {
+            throw new ArgumentException("At least one transcript output format must be selected.", nameof(settings));
+        }
+
+        foreach (var format in transcription.OutputFormats)
+        {
+            if (!Enum.IsDefined(format))
+            {
+                throw new ArgumentOutOfRangeException(nameof(settings), "Transcript output format must be known.");
+            }
+        }
     }
 }

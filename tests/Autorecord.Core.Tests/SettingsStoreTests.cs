@@ -27,6 +27,35 @@ public sealed class SettingsStoreTests
     }
 
     [Fact]
+    public async Task SaveAndLoadRoundTripsTranscriptionSettings()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var store = new SettingsStore(path);
+        var settings = new AppSettings
+        {
+            Transcription = new TranscriptionSettings
+            {
+                AutoTranscribeAfterRecording = true,
+                SelectedAsrModelId = "custom-asr",
+                SelectedDiarizationModelId = "custom-diarization",
+                OutputFolderMode = TranscriptOutputFolderMode.CustomFolder,
+                CustomOutputFolder = "C:\\Transcripts",
+                OutputFormats = [TranscriptOutputFormat.Markdown, TranscriptOutputFormat.Json],
+                EnableDiarization = true,
+                NumSpeakers = 2,
+                ClusterThreshold = 0.75,
+                OverwriteExistingTranscripts = true,
+                KeepIntermediateFiles = true
+            }
+        };
+
+        await store.SaveAsync(settings, CancellationToken.None);
+        var loaded = await store.LoadAsync(CancellationToken.None);
+
+        Assert.Equal(settings.Transcription, loaded.Transcription);
+    }
+
+    [Fact]
     public async Task LoadReturnsDefaultsWhenFileDoesNotExist()
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
@@ -37,6 +66,40 @@ public sealed class SettingsStoreTests
         Assert.Equal(1, loaded.SilencePromptMinutes);
         Assert.Equal(5, loaded.RetryPromptMinutes);
         Assert.Equal(RecordingMode.AllEvents, loaded.RecordingMode);
+        Assert.Equal(new TranscriptionSettings(), loaded.Transcription);
+    }
+
+    [Fact]
+    public async Task SaveRejectsCustomTranscriptFolderWithoutPath()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var store = new SettingsStore(path);
+        var settings = new AppSettings
+        {
+            Transcription = new TranscriptionSettings
+            {
+                OutputFolderMode = TranscriptOutputFolderMode.CustomFolder,
+                CustomOutputFolder = ""
+            }
+        };
+
+        await Assert.ThrowsAsync<ArgumentException>(() => store.SaveAsync(settings, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task SaveRejectsInvalidSpeakerCount()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var store = new SettingsStore(path);
+        var settings = new AppSettings
+        {
+            Transcription = new TranscriptionSettings
+            {
+                NumSpeakers = 7
+            }
+        };
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => store.SaveAsync(settings, CancellationToken.None));
     }
 
     [Fact]
