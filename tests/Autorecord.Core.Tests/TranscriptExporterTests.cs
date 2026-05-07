@@ -93,6 +93,28 @@ public sealed class TranscriptExporterTests
     }
 
     [Fact]
+    public async Task ExportAsyncLeavesNoTempFilesAfterOverwrite()
+    {
+        var outputDirectory = CreateTempDirectory();
+        Directory.CreateDirectory(outputDirectory);
+        var path = Path.Combine(outputDirectory, "meeting.txt");
+        await File.WriteAllTextAsync(path, "existing");
+        var exporter = new TranscriptExporter();
+
+        await exporter.ExportAsync(
+            CreateDocument(),
+            outputDirectory,
+            [TranscriptOutputFormat.Txt],
+            overwrite: true,
+            CancellationToken.None);
+
+        Assert.Empty(Directory.EnumerateFiles(outputDirectory, "*.tmp"));
+        var txt = await File.ReadAllTextAsync(path);
+        Assert.Contains("Привет, это тест.", txt);
+        Assert.DoesNotContain("existing", txt);
+    }
+
+    [Fact]
     public async Task ExportAsyncWritesOnlySelectedFormats()
     {
         var outputDirectory = CreateTempDirectory();
@@ -125,6 +147,52 @@ public sealed class TranscriptExporterTests
     }
 
     [Fact]
+    public async Task ExportAsyncRejectsNullDocument()
+    {
+        var exporter = new TranscriptExporter();
+
+        await Assert.ThrowsAsync<ArgumentNullException>(
+            () => exporter.ExportAsync(null!, CreateTempDirectory(), [TranscriptOutputFormat.Txt], false, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ExportAsyncRejectsNullFormats()
+    {
+        var exporter = new TranscriptExporter();
+
+        await Assert.ThrowsAsync<ArgumentNullException>(
+            () => exporter.ExportAsync(CreateDocument(), CreateTempDirectory(), null!, false, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ExportAsyncRejectsUnknownFormat()
+    {
+        var exporter = new TranscriptExporter();
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => exporter.ExportAsync(CreateDocument(), CreateTempDirectory(), [(TranscriptOutputFormat)999], false, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ExportAsyncRejectsBlankInputFile()
+    {
+        var exporter = new TranscriptExporter();
+        var document = CreateDocument() with { InputFile = " " };
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => exporter.ExportAsync(document, CreateTempDirectory(), [TranscriptOutputFormat.Txt], false, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ExportAsyncRejectsBlankOutputDirectory()
+    {
+        var exporter = new TranscriptExporter();
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => exporter.ExportAsync(CreateDocument(), " ", [TranscriptOutputFormat.Txt], false, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task ExportAsyncRejectsInvalidSegment()
     {
         var exporter = new TranscriptExporter();
@@ -135,6 +203,68 @@ public sealed class TranscriptExporterTests
                 new TranscriptSegment(1, 2.0, 1.0, "speaker-1", "Speaker 1", "bad timing", 0.9)
             ]
         };
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => exporter.ExportAsync(document, CreateTempDirectory(), [TranscriptOutputFormat.Txt], false, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ExportAsyncRejectsBlankSpeakerLabel()
+    {
+        var exporter = new TranscriptExporter();
+        var document = CreateDocument() with
+        {
+            Segments =
+            [
+                new TranscriptSegment(1, 1.2, 6.8, "speaker-1", " ", "Привет, это тест.", 0.95)
+            ]
+        };
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => exporter.ExportAsync(document, CreateTempDirectory(), [TranscriptOutputFormat.Txt], false, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ExportAsyncRejectsBlankText()
+    {
+        var exporter = new TranscriptExporter();
+        var document = CreateDocument() with
+        {
+            Segments =
+            [
+                new TranscriptSegment(1, 1.2, 6.8, "speaker-1", "Speaker 1", " ", 0.95)
+            ]
+        };
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => exporter.ExportAsync(document, CreateTempDirectory(), [TranscriptOutputFormat.Txt], false, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ExportAsyncRejectsNullSpeakers()
+    {
+        var exporter = new TranscriptExporter();
+        var document = CreateDocument() with { Speakers = null! };
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => exporter.ExportAsync(document, CreateTempDirectory(), [TranscriptOutputFormat.Txt], false, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ExportAsyncRejectsNullSegments()
+    {
+        var exporter = new TranscriptExporter();
+        var document = CreateDocument() with { Segments = null! };
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => exporter.ExportAsync(document, CreateTempDirectory(), [TranscriptOutputFormat.Txt], false, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ExportAsyncRejectsNullRawDiarizationSegments()
+    {
+        var exporter = new TranscriptExporter();
+        var document = CreateDocument() with { RawDiarizationSegments = null! };
 
         await Assert.ThrowsAsync<ArgumentException>(
             () => exporter.ExportAsync(document, CreateTempDirectory(), [TranscriptOutputFormat.Txt], false, CancellationToken.None));
