@@ -125,6 +125,16 @@ public sealed class DiarizationEngineTests
     }
 
     [Fact]
+    public void NormalizeTurnsAndReportCompletionDoesNotReport100WhenCleanupFails()
+    {
+        var progress = new RecordingProgress();
+        var turns = new[] { new DiarizationTurn(2, 1, "S0") };
+
+        Assert.Throws<ArgumentException>(() => DiarizationEngine.NormalizeTurnsAndReportCompletion(turns, progress));
+        Assert.DoesNotContain(100, progress.Values);
+    }
+
+    [Fact]
     public async Task DiarizeAsyncThrowsWhenSegmentationModelIsMissing()
     {
         var root = CreateTempDirectory();
@@ -211,6 +221,16 @@ public sealed class DiarizationEngineTests
         if (Directory.Exists(path))
         {
             Directory.Delete(path, recursive: true);
+        }
+    }
+
+    private sealed class RecordingProgress : IProgress<int>
+    {
+        public List<int> Values { get; } = [];
+
+        public void Report(int value)
+        {
+            Values.Add(value);
         }
     }
 }

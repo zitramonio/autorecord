@@ -45,9 +45,10 @@ public sealed class DiarizationEngine : IDiarizationEngine
             var turns = Decode(normalizedWavPath, segmentationModelPath, embeddingModelPath, numSpeakers, clusterThreshold);
 
             cancellationToken.ThrowIfCancellationRequested();
-            progress.Report(100);
 
-            return NormalizeTurns(turns);
+            var normalized = NormalizeTurnsAndReportCompletion(turns, progress);
+
+            return normalized;
         }, cancellationToken);
     }
 
@@ -87,6 +88,17 @@ public sealed class DiarizationEngine : IDiarizationEngine
 
             normalized.Add(turn);
         }
+
+        return normalized;
+    }
+
+    internal static IReadOnlyList<DiarizationTurn> NormalizeTurnsAndReportCompletion(
+        IEnumerable<DiarizationTurn> turns,
+        IProgress<int> progress)
+    {
+        var normalized = NormalizeTurns(turns);
+
+        progress.Report(100);
 
         return normalized;
     }
