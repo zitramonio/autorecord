@@ -57,6 +57,21 @@ public sealed class SettingsStore
         }
 
         var transcription = settings.Transcription;
+        if (transcription is null)
+        {
+            throw new ArgumentException("Transcription settings must be set.", nameof(settings));
+        }
+
+        if (string.IsNullOrWhiteSpace(transcription.SelectedAsrModelId))
+        {
+            throw new ArgumentException("Selected ASR model ID must be set.", nameof(settings));
+        }
+
+        if (string.IsNullOrWhiteSpace(transcription.SelectedDiarizationModelId))
+        {
+            throw new ArgumentException("Selected diarization model ID must be set.", nameof(settings));
+        }
+
         if (!Enum.IsDefined(transcription.OutputFolderMode))
         {
             throw new ArgumentOutOfRangeException(nameof(settings), "Transcript output folder mode must be known.");
@@ -76,6 +91,11 @@ public sealed class SettingsStore
         if (transcription.ClusterThreshold is <= 0 or > 1)
         {
             throw new ArgumentOutOfRangeException(nameof(settings), "Cluster threshold must be greater than 0 and no more than 1.");
+        }
+
+        if (transcription.OutputFormats is null)
+        {
+            throw new ArgumentException("Transcript output formats must be set.", nameof(settings));
         }
 
         if (transcription.OutputFormats.Count == 0)

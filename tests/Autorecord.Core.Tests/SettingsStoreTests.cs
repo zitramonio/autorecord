@@ -100,6 +100,74 @@ public sealed class SettingsStoreTests
     }
 
     [Fact]
+    public async Task LoadRejectsNullTranscriptionSettings()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(
+            path,
+            """
+            {
+              "Transcription": null
+            }
+            """);
+        var store = new SettingsStore(path);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => store.LoadAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task LoadRejectsNullTranscriptOutputFormats()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(
+            path,
+            """
+            {
+              "Transcription": {
+                "OutputFormats": null
+              }
+            }
+            """);
+        var store = new SettingsStore(path);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => store.LoadAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task SaveRejectsBlankSelectedAsrModelId()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var store = new SettingsStore(path);
+        var settings = new AppSettings
+        {
+            Transcription = new TranscriptionSettings
+            {
+                SelectedAsrModelId = " "
+            }
+        };
+
+        await Assert.ThrowsAsync<ArgumentException>(() => store.SaveAsync(settings, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task SaveRejectsBlankSelectedDiarizationModelId()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var store = new SettingsStore(path);
+        var settings = new AppSettings
+        {
+            Transcription = new TranscriptionSettings
+            {
+                SelectedDiarizationModelId = ""
+            }
+        };
+
+        await Assert.ThrowsAsync<ArgumentException>(() => store.SaveAsync(settings, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task SaveRejectsCustomTranscriptFolderWithoutPath()
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
