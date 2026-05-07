@@ -112,6 +112,8 @@ public sealed class TranscriptionQueueTests
 
         var persistedJob = Assert.Single(await repository.LoadAsync(CancellationToken.None));
         Assert.Equal(TranscriptionJobStatus.Cancelled, persistedJob.Status);
+        Assert.False(string.IsNullOrWhiteSpace(persistedJob.ErrorMessage));
+        Assert.Contains("cancel", persistedJob.ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

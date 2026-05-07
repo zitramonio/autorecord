@@ -101,7 +101,8 @@ public sealed class TranscriptionQueue
                 ReplaceJob(index, _jobs[index] with
                 {
                     Status = TranscriptionJobStatus.Cancelled,
-                    FinishedAt = _clock()
+                    FinishedAt = _clock(),
+                    ErrorMessage = "Transcription job was cancelled."
                 });
                 await _repository.SaveAsync(_jobs, CancellationToken.None);
                 return;
