@@ -76,6 +76,114 @@ public sealed class TranscriptionQueueTests
     }
 
     [Fact]
+    public async Task EnqueueAsyncCompletesWhilePipelineIsRunning()
+    {
+        var repository = new TranscriptionJobRepository(CreateTempPath());
+        var pipelineStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePipeline = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pipeline = new FakePipeline(async (_, _, _) =>
+        {
+            pipelineStarted.SetResult();
+            await releasePipeline.Task;
+            return new TranscriptionPipelineResult(["C:\\Transcripts\\first.md"]);
+        });
+        var queue = new TranscriptionQueue(repository, pipeline, FixedClock);
+        await queue.EnqueueAsync(
+            "C:\\Records\\first.wav",
+            "C:\\Transcripts",
+            "asr-fast",
+            null,
+            CancellationToken.None);
+        var runTask = queue.RunNextAsync(CancellationToken.None);
+        await pipelineStarted.Task;
+
+        try
+        {
+            var enqueueTask = queue.EnqueueAsync(
+                "C:\\Records\\second.wav",
+                "C:\\Transcripts",
+                "asr-fast",
+                null,
+                CancellationToken.None);
+            var completed = await Task.WhenAny(enqueueTask, Task.Delay(TimeSpan.FromMilliseconds(500)));
+
+            Assert.Same(enqueueTask, completed);
+            var jobs = await repository.LoadAsync(CancellationToken.None);
+            Assert.Contains(jobs, job =>
+                job.InputFilePath == "C:\\Records\\second.wav" &&
+                job.Status == TranscriptionJobStatus.Pending);
+        }
+        finally
+        {
+            releasePipeline.SetResult();
+            await runTask;
+        }
+    }
+
+    [Fact]
+    public async Task ParallelRunNextAsyncStartsOnlyOnePipeline()
+    {
+        var repository = new TranscriptionJobRepository(CreateTempPath());
+        var pipelineStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePipeline = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pipeline = new FakePipeline(async (_, _, _) =>
+        {
+            pipelineStarted.SetResult();
+            await releasePipeline.Task;
+            return new TranscriptionPipelineResult(["C:\\Transcripts\\meeting.md"]);
+        });
+        var queue = new TranscriptionQueue(repository, pipeline, FixedClock);
+        await queue.EnqueueAsync(
+            "C:\\Records\\meeting.wav",
+            "C:\\Transcripts",
+            "asr-fast",
+            null,
+            CancellationToken.None);
+
+        var firstRun = queue.RunNextAsync(CancellationToken.None);
+        await pipelineStarted.Task;
+        var secondRun = queue.RunNextAsync(CancellationToken.None);
+
+        try
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(100));
+
+            Assert.Equal(1, pipeline.RunCount);
+        }
+        finally
+        {
+            releasePipeline.SetResult();
+            await Task.WhenAll(firstRun, secondRun);
+        }
+    }
+
+    [Fact]
+    public async Task RunNextAsyncPersistsCompletedWhenTokenCancelsAfterPipelineResult()
+    {
+        var repository = new TranscriptionJobRepository(CreateTempPath());
+        using var cancellation = new CancellationTokenSource();
+        var pipeline = new FakePipeline((_, _, _) =>
+        {
+            cancellation.Cancel();
+            return Task.FromResult(new TranscriptionPipelineResult(["C:\\Transcripts\\meeting.md"]));
+        });
+        var queue = new TranscriptionQueue(repository, pipeline, FixedClock);
+        await queue.EnqueueAsync(
+            "C:\\Records\\meeting.wav",
+            "C:\\Transcripts",
+            "asr-fast",
+            null,
+            CancellationToken.None);
+
+        await queue.RunNextAsync(cancellation.Token);
+
+        var persistedJob = Assert.Single(await repository.LoadAsync(CancellationToken.None));
+        Assert.Equal(TranscriptionJobStatus.Completed, persistedJob.Status);
+        Assert.Equal(100, persistedJob.ProgressPercent);
+        Assert.Equal(["C:\\Transcripts\\meeting.md"], persistedJob.OutputFiles);
+    }
+
+    [Fact]
     public async Task RunNextAsyncMarksFailedWhenPipelineThrows()
     {
         var repository = new TranscriptionJobRepository(CreateTempPath());

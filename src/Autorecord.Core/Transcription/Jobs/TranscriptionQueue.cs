@@ -7,7 +7,9 @@ public sealed class TranscriptionQueue
     private readonly TranscriptionJobRepository _repository;
     private readonly ITranscriptionPipeline _pipeline;
     private readonly Func<DateTimeOffset> _clock;
-    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly object _jobsGate = new();
+    private readonly SemaphoreSlim _repositoryGate = new(1, 1);
+    private readonly SemaphoreSlim _workerGate = new(1, 1);
     private IReadOnlyList<TranscriptionJob> _jobs = [];
 
     public TranscriptionQueue(
@@ -20,18 +22,23 @@ public sealed class TranscriptionQueue
         _clock = clock;
     }
 
-    public IReadOnlyList<TranscriptionJob> Jobs => _jobs;
+    public IReadOnlyList<TranscriptionJob> Jobs
+    {
+        get
+        {
+            lock (_jobsGate)
+            {
+                return _jobs;
+            }
+        }
+    }
 
     public async Task InitializeAsync(CancellationToken cancellationToken)
     {
-        await _gate.WaitAsync(cancellationToken);
-        try
+        var jobs = await _repository.LoadAsync(cancellationToken);
+        lock (_jobsGate)
         {
-            _jobs = await _repository.LoadAsync(cancellationToken);
-        }
-        finally
-        {
-            _gate.Release();
+            _jobs = jobs;
         }
     }
 
@@ -42,54 +49,43 @@ public sealed class TranscriptionQueue
         string? diarizationModelId,
         CancellationToken cancellationToken)
     {
-        await _gate.WaitAsync(cancellationToken);
-        try
+        IReadOnlyList<TranscriptionJob> jobs;
+        var job = new TranscriptionJob
         {
-            var job = new TranscriptionJob
-            {
-                Id = Guid.NewGuid(),
-                InputFilePath = inputFilePath,
-                OutputDirectory = outputDirectory,
-                AsrModelId = asrModelId,
-                DiarizationModelId = diarizationModelId,
-                Status = TranscriptionJobStatus.Pending,
-                ProgressPercent = 0,
-                CreatedAt = _clock()
-            };
+            Id = Guid.NewGuid(),
+            InputFilePath = inputFilePath,
+            OutputDirectory = outputDirectory,
+            AsrModelId = asrModelId,
+            DiarizationModelId = diarizationModelId,
+            Status = TranscriptionJobStatus.Pending,
+            ProgressPercent = 0,
+            CreatedAt = _clock()
+        };
 
-            _jobs = _jobs.Append(job).ToArray();
-            await _repository.SaveAsync(_jobs, cancellationToken);
-            return job;
-        }
-        finally
+        lock (_jobsGate)
         {
-            _gate.Release();
+            _jobs = _jobs.Append(job).ToArray();
+            jobs = _jobs;
         }
+
+        await SaveAsync(jobs, cancellationToken);
+        return job;
     }
 
     public async Task RunNextAsync(CancellationToken cancellationToken)
     {
-        await _gate.WaitAsync(cancellationToken);
+        await _workerGate.WaitAsync(cancellationToken);
         try
         {
-            var index = FindNextPendingJobIndex();
-            if (index < 0)
+            if (!TryStartNextPendingJob(out var index, out var runningJob, out var jobs))
             {
                 return;
             }
 
-            var runningJob = _jobs[index] with
-            {
-                Status = TranscriptionJobStatus.Running,
-                StartedAt = _clock(),
-                ProgressPercent = 0,
-                ErrorMessage = null
-            };
-            ReplaceJob(index, runningJob);
-            await _repository.SaveAsync(_jobs, cancellationToken);
+            await SaveAsync(jobs, cancellationToken);
 
             var progress = new JobProgress(value =>
-                ReplaceJob(index, _jobs[index] with { ProgressPercent = Math.Clamp(value, 0, 100) }));
+                UpdateJob(index, job => job with { ProgressPercent = Math.Clamp(value, 0, 100) }));
 
             TranscriptionPipelineResult result;
             try
@@ -98,60 +94,101 @@ public sealed class TranscriptionQueue
             }
             catch (OperationCanceledException)
             {
-                ReplaceJob(index, _jobs[index] with
+                jobs = UpdateJob(index, job => job with
                 {
                     Status = TranscriptionJobStatus.Cancelled,
                     FinishedAt = _clock(),
                     ErrorMessage = "Transcription job was cancelled."
                 });
-                await _repository.SaveAsync(_jobs, CancellationToken.None);
+                await SaveAsync(jobs, CancellationToken.None);
                 return;
             }
             catch (Exception ex)
             {
-                ReplaceJob(index, _jobs[index] with
+                jobs = UpdateJob(index, job => job with
                 {
                     Status = TranscriptionJobStatus.Failed,
                     FinishedAt = _clock(),
                     ErrorMessage = ex.Message
                 });
-                await _repository.SaveAsync(_jobs, CancellationToken.None);
+                await SaveAsync(jobs, CancellationToken.None);
                 return;
             }
 
-            ReplaceJob(index, _jobs[index] with
+            jobs = UpdateJob(index, job => job with
             {
                 Status = TranscriptionJobStatus.Completed,
                 ProgressPercent = 100,
                 FinishedAt = _clock(),
                 OutputFiles = result.OutputFiles
             });
-            await _repository.SaveAsync(_jobs, cancellationToken);
+            await SaveAsync(jobs, CancellationToken.None);
         }
         finally
         {
-            _gate.Release();
+            _workerGate.Release();
         }
     }
 
-    private int FindNextPendingJobIndex()
+    private bool TryStartNextPendingJob(
+        out int index,
+        out TranscriptionJob runningJob,
+        out IReadOnlyList<TranscriptionJob> jobs)
     {
-        for (var i = 0; i < _jobs.Count; i++)
+        lock (_jobsGate)
         {
-            if (_jobs[i].Status == TranscriptionJobStatus.Pending)
-            {
-                return i;
-            }
-        }
+            index = -1;
+            runningJob = new TranscriptionJob();
+            jobs = _jobs;
 
-        return -1;
+            for (var i = 0; i < _jobs.Count; i++)
+            {
+                if (_jobs[i].Status == TranscriptionJobStatus.Pending)
+                {
+                    index = i;
+                    runningJob = _jobs[i] with
+                    {
+                        Status = TranscriptionJobStatus.Running,
+                        StartedAt = _clock(),
+                        ProgressPercent = 0,
+                        ErrorMessage = null
+                    };
+                    jobs = ReplaceJobUnderLock(index, runningJob);
+                    return true;
+                }
+            }
+
+            return false;
+        }
     }
 
-    private void ReplaceJob(int index, TranscriptionJob job)
+    private IReadOnlyList<TranscriptionJob> UpdateJob(int index, Func<TranscriptionJob, TranscriptionJob> update)
+    {
+        lock (_jobsGate)
+        {
+            return ReplaceJobUnderLock(index, update(_jobs[index]));
+        }
+    }
+
+    private IReadOnlyList<TranscriptionJob> ReplaceJobUnderLock(int index, TranscriptionJob job)
     {
         var jobs = _jobs.ToArray();
         jobs[index] = job;
         _jobs = jobs;
+        return jobs;
+    }
+
+    private async Task SaveAsync(IReadOnlyList<TranscriptionJob> jobs, CancellationToken cancellationToken)
+    {
+        await _repositoryGate.WaitAsync(cancellationToken);
+        try
+        {
+            await _repository.SaveAsync(jobs, cancellationToken);
+        }
+        finally
+        {
+            _repositoryGate.Release();
+        }
     }
 
     private sealed class JobProgress(Action<int> report) : IProgress<int>
