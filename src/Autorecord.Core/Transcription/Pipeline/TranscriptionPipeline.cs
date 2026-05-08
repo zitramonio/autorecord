@@ -41,6 +41,7 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        LocalNetworkGuard.AssertTranscriptionRuntimeIsOffline();
         var pipelineProgress = new PipelineProgress(progress);
         pipelineProgress.Report(0);
 
