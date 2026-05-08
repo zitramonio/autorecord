@@ -185,6 +185,90 @@ public sealed class TranscriptionPipelineTests
     }
 
     [Fact]
+    public async Task RunAsyncThrowsWhenAsrModelHasWrongTypeBeforeNormalizationOrEnginesRun()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var inputPath = Path.Combine(root, "meeting.wav");
+            var normalizedRoot = Path.Combine(root, "normalized");
+            CreateSilentWav(inputPath, new WaveFormat(48_000, 16, 2));
+            var catalog = await CreateCatalogAsync(root);
+            InstallModel(root, "wrong-asr-type");
+            var asr = new FakeTranscriptionEngine();
+            var diarization = new FakeDiarizationEngine();
+            var pipeline = CreatePipeline(
+                root,
+                catalog,
+                new Dictionary<string, ITranscriptionEngine> { ["fake-asr"] = asr },
+                diarization,
+                new TranscriptionSettings
+                {
+                    OutputFormats = [TranscriptOutputFormat.Txt],
+                    KeepIntermediateFiles = false
+                });
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => pipeline.RunAsync(
+                    CreateJob(inputPath, Path.Combine(root, "out"), "wrong-asr-type", null),
+                    new Progress<int>(),
+                    CancellationToken.None));
+
+            Assert.Contains("asr", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, asr.CallCount);
+            Assert.Equal(0, diarization.CallCount);
+            Assert.False(Directory.Exists(normalizedRoot));
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsyncThrowsWhenDiarizationModelHasWrongTypeBeforeNormalizationOrEnginesRun()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var inputPath = Path.Combine(root, "meeting.wav");
+            var normalizedRoot = Path.Combine(root, "normalized");
+            CreateSilentWav(inputPath, new WaveFormat(48_000, 16, 2));
+            var catalog = await CreateCatalogAsync(root);
+            InstallModel(root, "asr-fast");
+            InstallModel(root, "wrong-diarization-type");
+            var asr = new FakeTranscriptionEngine();
+            var diarization = new FakeDiarizationEngine();
+            var pipeline = CreatePipeline(
+                root,
+                catalog,
+                new Dictionary<string, ITranscriptionEngine> { ["fake-asr"] = asr },
+                diarization,
+                new TranscriptionSettings
+                {
+                    EnableDiarization = true,
+                    OutputFormats = [TranscriptOutputFormat.Txt],
+                    KeepIntermediateFiles = false
+                });
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => pipeline.RunAsync(
+                    CreateJob(inputPath, Path.Combine(root, "out"), "asr-fast", "wrong-diarization-type"),
+                    new Progress<int>(),
+                    CancellationToken.None));
+
+            Assert.Contains("diarization", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, asr.CallCount);
+            Assert.Equal(0, diarization.CallCount);
+            Assert.False(Directory.Exists(normalizedRoot));
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public async Task RunAsyncMapsEngineProgressToMonotonicPipelineProgress()
     {
         var root = CreateTempRoot();
@@ -439,6 +523,24 @@ public sealed class TranscriptionPipelineTests
                   "engine": "fake-diarization",
                   "download": { "url": "https://example.com/diarization.zip" },
                   "install": { "targetFolder": "diarization-fast", "requiredFiles": [ "model.bin" ] },
+                  "runtime": { "sampleRate": 16000, "channels": 1, "device": "cpu" }
+                },
+                {
+                  "id": "wrong-asr-type",
+                  "displayName": "Wrong ASR Type",
+                  "type": "diarization",
+                  "engine": "fake-asr",
+                  "download": { "url": "https://example.com/wrong-asr-type.zip" },
+                  "install": { "targetFolder": "wrong-asr-type", "requiredFiles": [ "model.bin" ] },
+                  "runtime": { "sampleRate": 16000, "channels": 1, "device": "cpu" }
+                },
+                {
+                  "id": "wrong-diarization-type",
+                  "displayName": "Wrong Diarization Type",
+                  "type": "asr",
+                  "engine": "fake-asr",
+                  "download": { "url": "https://example.com/wrong-diarization-type.zip" },
+                  "install": { "targetFolder": "wrong-diarization-type", "requiredFiles": [ "model.bin" ] },
                   "runtime": { "sampleRate": 16000, "channels": 1, "device": "cpu" }
                 }
               ]

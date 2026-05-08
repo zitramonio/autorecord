@@ -45,6 +45,7 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
         pipelineProgress.Report(0);
 
         var asrModel = _catalog.GetRequired(job.AsrModelId);
+        EnsureModelType(asrModel, "asr");
         await EnsureInstalledAsync(asrModel, cancellationToken);
         ModelCatalogEntry? diarizationModel = null;
         var diarizationModelId = job.DiarizationModelId;
@@ -56,6 +57,7 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
             }
 
             diarizationModel = _catalog.GetRequired(diarizationModelId);
+            EnsureModelType(diarizationModel, "diarization");
             await EnsureInstalledAsync(diarizationModel, cancellationToken);
         }
 
@@ -114,6 +116,15 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
         pipelineProgress.Report(100);
 
         return new TranscriptionPipelineResult(outputFiles.AllPaths);
+    }
+
+    private static void EnsureModelType(ModelCatalogEntry model, string expectedType)
+    {
+        if (!string.Equals(model.Type, expectedType, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Model '{model.Id}' must have type '{expectedType}', but catalog type is '{model.Type}'.");
+        }
     }
 
     private async Task EnsureInstalledAsync(ModelCatalogEntry model, CancellationToken cancellationToken)
