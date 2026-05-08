@@ -83,6 +83,25 @@ public sealed class TranscriptAssemblerTests
     }
 
     [Fact]
+    public void AssembleUsesStableSpeakerZeroLabelWhenTurnAppearsSecond()
+    {
+        var asr = new[]
+        {
+            new TranscriptionEngineSegment(3.0, 4.0, "Текст.", null)
+        };
+        var turns = new[]
+        {
+            new DiarizationTurn(0.0, 1.0, "SPEAKER_01"),
+            new DiarizationTurn(2.0, 5.0, "SPEAKER_00")
+        };
+
+        var segments = TranscriptAssembler.Assemble(asr, turns);
+
+        Assert.Equal("SPEAKER_00", segments[0].SpeakerId);
+        Assert.Equal("Speaker 1", segments[0].SpeakerLabel);
+    }
+
+    [Fact]
     public void AssembleMergesAdjacentSegmentsForSameSpeaker()
     {
         var asr = new[]
@@ -124,6 +143,48 @@ public sealed class TranscriptAssemblerTests
         Assert.Equal(2, segments.Count);
         Assert.Equal(firstText, segments[0].Text);
         Assert.Equal(secondText, segments[1].Text);
+    }
+
+    [Fact]
+    public void AssembleMergesWhenTextWithSeparatorEqualsLimit()
+    {
+        var firstText = new string('a', 299);
+        var secondText = new string('b', 300);
+        var asr = new[]
+        {
+            new TranscriptionEngineSegment(1.0, 2.0, firstText, null),
+            new TranscriptionEngineSegment(2.5, 3.0, secondText, null)
+        };
+        var turns = new[]
+        {
+            new DiarizationTurn(0.5, 3.5, "SPEAKER_00")
+        };
+
+        var segments = TranscriptAssembler.Assemble(asr, turns);
+
+        var segment = Assert.Single(segments);
+        Assert.Equal(600, segment.Text.Length);
+        Assert.Equal(firstText + " " + secondText, segment.Text);
+    }
+
+    [Fact]
+    public void AssembleDoesNotMergeSameSpeakerWhenGapExceedsLimit()
+    {
+        var asr = new[]
+        {
+            new TranscriptionEngineSegment(1.0, 2.0, "Первый.", null),
+            new TranscriptionEngineSegment(3.1, 4.0, "Второй.", null)
+        };
+        var turns = new[]
+        {
+            new DiarizationTurn(0.5, 4.5, "SPEAKER_00")
+        };
+
+        var segments = TranscriptAssembler.Assemble(asr, turns);
+
+        Assert.Equal(2, segments.Count);
+        Assert.Equal("Первый.", segments[0].Text);
+        Assert.Equal("Второй.", segments[1].Text);
     }
 
     [Fact]
