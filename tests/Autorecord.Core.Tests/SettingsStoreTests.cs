@@ -93,6 +93,7 @@ public sealed class SettingsStoreTests
         var loaded = await store.LoadAsync(CancellationToken.None);
 
         Assert.Equal(new TranscriptionSettings(), loaded.Transcription);
+        Assert.True(loaded.Transcription.AutoTranscribeAfterRecording);
         Assert.Equal("sherpa-gigaam-v2-ru-fast", loaded.Transcription.SelectedAsrModelId);
         Assert.Equal(
             [TranscriptOutputFormat.Txt, TranscriptOutputFormat.Markdown, TranscriptOutputFormat.Srt, TranscriptOutputFormat.Json],

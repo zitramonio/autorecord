@@ -22,7 +22,7 @@ public enum TranscriptOutputFormat
 
 public sealed record TranscriptionSettings
 {
-    public bool AutoTranscribeAfterRecording { get; init; }
+    public bool AutoTranscribeAfterRecording { get; init; } = true;
     public string SelectedAsrModelId { get; init; } = "sherpa-gigaam-v2-ru-fast";
     public string SelectedDiarizationModelId { get; init; } = "sherpa-diarization-pyannote-fast";
     public TranscriptOutputFolderMode OutputFolderMode { get; init; } = TranscriptOutputFolderMode.SameAsRecording;
