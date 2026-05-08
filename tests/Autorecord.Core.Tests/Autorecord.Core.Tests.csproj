@@ -16,11 +16,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Autorecord.Core\Autorecord.Core.csproj" />
+    <ProjectReference Include="..\..\src\Autorecord.App\Autorecord.App.csproj" />
   </ItemGroup>
 
 </Project>

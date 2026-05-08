@@ -67,7 +67,7 @@ public sealed class SettingsStore
             throw new ArgumentException("Selected ASR model ID must be set.", nameof(settings));
         }
 
-        if (string.IsNullOrWhiteSpace(transcription.SelectedDiarizationModelId))
+        if (transcription.EnableDiarization && string.IsNullOrWhiteSpace(transcription.SelectedDiarizationModelId))
         {
             throw new ArgumentException("Selected diarization model ID must be set.", nameof(settings));
         }

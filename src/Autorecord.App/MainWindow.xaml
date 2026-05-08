@@ -103,12 +103,55 @@
                     <TextBlock Margin="0,12,0,0" Text="ASR-модель" />
                     <ComboBox x:Name="AsrModelBox"
                               Margin="0,6,0,0"
-                              DisplayMemberPath="DisplayName"
+                              DisplayMemberPath="DisplayNameWithStatus"
                               SelectedValuePath="Id"
                               SelectionChanged="AsrModelBox_SelectionChanged" />
-                    <CheckBox x:Name="DiarizationModeBox"
-                              Margin="0,12,0,0"
-                              Content="Определять спикеров" />
+                    <TextBlock Margin="0,12,0,0" Text="Разделение по спикерам" />
+                    <ComboBox x:Name="DiarizationModelBox"
+                              Margin="0,6,0,0"
+                              DisplayMemberPath="DisplayNameWithStatus"
+                              SelectedValuePath="Id"
+                              SelectionChanged="DiarizationModelBox_SelectionChanged" />
+                    <TextBlock Margin="0,12,0,0" Text="Количество спикеров" />
+                    <ComboBox x:Name="SpeakerCountBox"
+                              Width="140"
+                              Margin="0,6,0,0"
+                              HorizontalAlignment="Left"
+                              DisplayMemberPath="DisplayName"
+                              SelectedValuePath="Value" />
+                    <TextBlock Margin="0,12,0,0" Text="Папка транскриптов" />
+                    <ComboBox x:Name="TranscriptOutputFolderModeBox"
+                              Width="220"
+                              Margin="0,6,0,0"
+                              HorizontalAlignment="Left"
+                              DisplayMemberPath="DisplayName"
+                              SelectedValuePath="Value"
+                              SelectionChanged="TranscriptOutputFolderModeBox_SelectionChanged" />
+                    <DockPanel Margin="0,6,0,0">
+                        <Button x:Name="ChooseTranscriptFolderButton"
+                                DockPanel.Dock="Right"
+                                Width="100"
+                                Click="ChooseTranscriptFolder_Click">
+                            Выбрать
+                        </Button>
+                        <TextBox x:Name="CustomTranscriptOutputFolderBox"
+                                 Margin="0,0,8,0" />
+                    </DockPanel>
+                    <TextBlock Margin="0,12,0,0" Text="Форматы" />
+                    <WrapPanel Margin="0,6,0,0">
+                        <CheckBox x:Name="TranscriptTxtFormatBox"
+                                  Margin="0,0,12,0"
+                                  Content="TXT" />
+                        <CheckBox x:Name="TranscriptMarkdownFormatBox"
+                                  Margin="0,0,12,0"
+                                  Content="Markdown" />
+                        <CheckBox x:Name="TranscriptSrtFormatBox"
+                                  Margin="0,0,12,0"
+                                  Content="SRT" />
+                        <CheckBox x:Name="TranscriptJsonFormatBox"
+                                  Margin="0,0,12,0"
+                                  Content="JSON" />
+                    </WrapPanel>
                     <TextBlock x:Name="SelectedModelStatusText"
                                Margin="0,12,0,0"
                                Text="Модель не выбрана" />

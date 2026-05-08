@@ -595,19 +595,31 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        var asrModels = await BuildModelListAsync("asr", cancellationToken);
+        var diarizationModels = await BuildModelListAsync("diarization", cancellationToken);
+
+        _ = Dispatcher.BeginInvoke(() => _mainWindow.SetModels(asrModels, diarizationModels));
+    }
+
+    private async Task<IReadOnlyList<ModelListItemViewModel>> BuildModelListAsync(
+        string type,
+        CancellationToken cancellationToken)
+    {
         var models = new List<ModelListItemViewModel>();
-        foreach (var model in _modelCatalog.GetByType("asr"))
+        foreach (var model in _modelCatalog!.GetByType(type))
         {
-            var status = await _modelManager.GetStatusAsync(model, cancellationToken);
+            var status = await _modelManager!.GetStatusAsync(model, cancellationToken);
             models.Add(new ModelListItemViewModel(model.Id, model.DisplayName, model.Type, status.ToString()));
         }
 
-        _ = Dispatcher.BeginInvoke(() => _mainWindow.SetModels(models));
+        return models;
     }
 
     private async Task DownloadSelectedModelAsync(CancellationToken cancellationToken)
     {
-        if (!TryGetSelectedModel(out var model)
+        if (_mainWindow is null
+            || !_mainWindow.TryGetCurrentSettings(out var currentSettings)
+            || !TryGetModelById(currentSettings.Transcription.SelectedAsrModelId, out var model)
             || _modelCatalog is null
             || _modelDownloadService is null
             || _modelInstallService is null
@@ -616,6 +628,8 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        SetCurrentSettings(currentSettings);
+        var transcriptionSettings = currentSettings.Transcription;
         var tempPaths = new List<string>();
         try
         {
@@ -625,10 +639,10 @@ public partial class App : System.Windows.Application
             await DownloadAndInstallModelAsync(model, progress, tempPaths, cancellationToken);
             installedModels.Add(model.DisplayName);
 
-            if (_settings.Transcription.EnableDiarization
-                && !string.IsNullOrWhiteSpace(_settings.Transcription.SelectedDiarizationModelId))
+            if (transcriptionSettings.EnableDiarization
+                && !string.IsNullOrWhiteSpace(transcriptionSettings.SelectedDiarizationModelId))
             {
-                var diarizationModel = _modelCatalog.GetRequired(_settings.Transcription.SelectedDiarizationModelId);
+                var diarizationModel = _modelCatalog.GetRequired(transcriptionSettings.SelectedDiarizationModelId);
                 var diarizationStatus = await _modelManager.GetStatusAsync(diarizationModel, cancellationToken);
                 if (diarizationStatus != ModelInstallStatus.Installed)
                 {
@@ -995,6 +1009,18 @@ public partial class App : System.Windows.Application
         }
 
         var modelId = _mainWindow.SelectedModelId;
+        return TryGetModelById(modelId, out model);
+    }
+
+    private bool TryGetModelById(string? modelId, out ModelCatalogEntry model)
+    {
+        model = new ModelCatalogEntry();
+        if (_modelCatalog is null)
+        {
+            SetStatus("Каталог моделей не загружен.");
+            return false;
+        }
+
         if (string.IsNullOrWhiteSpace(modelId))
         {
             SetStatus("Выберите модель.");

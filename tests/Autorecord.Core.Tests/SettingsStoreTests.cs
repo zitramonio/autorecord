@@ -152,7 +152,7 @@ public sealed class SettingsStoreTests
     }
 
     [Fact]
-    public async Task SaveRejectsBlankSelectedDiarizationModelId()
+    public async Task SaveAllowsEmptyDiarizationModelWhenDiarizationDisabled()
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
         var store = new SettingsStore(path);
@@ -160,6 +160,28 @@ public sealed class SettingsStoreTests
         {
             Transcription = new TranscriptionSettings
             {
+                EnableDiarization = false,
+                SelectedDiarizationModelId = ""
+            }
+        };
+
+        await store.SaveAsync(settings, CancellationToken.None);
+        var loaded = await store.LoadAsync(CancellationToken.None);
+
+        Assert.False(loaded.Transcription.EnableDiarization);
+        Assert.Equal("", loaded.Transcription.SelectedDiarizationModelId);
+    }
+
+    [Fact]
+    public async Task SaveRejectsEmptyDiarizationModelWhenDiarizationEnabled()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var store = new SettingsStore(path);
+        var settings = new AppSettings
+        {
+            Transcription = new TranscriptionSettings
+            {
+                EnableDiarization = true,
                 SelectedDiarizationModelId = ""
             }
         };

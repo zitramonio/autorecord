@@ -9,11 +9,14 @@ namespace Autorecord.App;
 
 public partial class MainWindow : Window
 {
+    private const string NoDiarizationModelId = "";
+
     private AppSettings _settings = new();
 
     public MainWindow()
     {
         InitializeComponent();
+        InitializeTranscriptionControls();
         LoadIntoForm(_settings);
     }
 
@@ -28,7 +31,9 @@ public partial class MainWindow : Window
     public event EventHandler? PickFileForTranscriptionRequested;
 
     public bool AllowClose { get; set; }
-    public string? SelectedModelId => AsrModelBox.SelectedValue as string;
+    public string? SelectedModelId => SelectedAsrModelId;
+    public string? SelectedAsrModelId => AsrModelBox.SelectedValue as string;
+    public string? SelectedDiarizationModelId => DiarizationModelBox.SelectedValue as string;
 
     public void SetSettings(AppSettings settings)
     {
@@ -50,14 +55,33 @@ public partial class MainWindow : Window
         StopRecordingButton.IsEnabled = isRecording;
     }
 
-    public void SetModels(IReadOnlyList<ModelListItemViewModel> models)
+    public void SetModels(
+        IReadOnlyList<ModelListItemViewModel> asrModels,
+        IReadOnlyList<ModelListItemViewModel> diarizationModels)
     {
-        var selectedModelId = SelectedModelId ?? _settings.Transcription.SelectedAsrModelId;
-        AsrModelBox.ItemsSource = models;
-        AsrModelBox.SelectedValue = models.Any(model => model.Id == selectedModelId)
+        var selectedModelId = SelectedAsrModelId ?? _settings.Transcription.SelectedAsrModelId;
+        AsrModelBox.ItemsSource = asrModels;
+        AsrModelBox.SelectedValue = asrModels.Any(model => model.Id == selectedModelId)
             ? selectedModelId
-            : models.FirstOrDefault()?.Id;
+            : asrModels.FirstOrDefault()?.Id;
+
+        var selectedDiarizationModelId = SelectedDiarizationModelId
+            ?? (_settings.Transcription.EnableDiarization
+                ? _settings.Transcription.SelectedDiarizationModelId
+                : NoDiarizationModelId);
+        var diarizationOptions = new[]
+            {
+                new ModelListItemViewModel(NoDiarizationModelId, "Без разделения по спикерам", "diarization", "")
+            }
+            .Concat(diarizationModels)
+            .ToArray();
+        DiarizationModelBox.ItemsSource = diarizationOptions;
+        DiarizationModelBox.SelectedValue = diarizationOptions.Any(model => model.Id == selectedDiarizationModelId)
+            ? selectedDiarizationModelId
+            : NoDiarizationModelId;
+
         UpdateSelectedModelStatus();
+        UpdateDiarizationControlsState();
     }
 
     public void SetSelectedModelStatus(string status)
@@ -86,6 +110,26 @@ public partial class MainWindow : Window
             .ToArray();
     }
 
+    private void InitializeTranscriptionControls()
+    {
+        SpeakerCountBox.ItemsSource = new SpeakerCountOption[]
+        {
+            new("Auto", null),
+            new("1", 1),
+            new("2", 2),
+            new("3", 3),
+            new("4", 4),
+            new("5", 5),
+            new("6", 6)
+        };
+
+        TranscriptOutputFolderModeBox.ItemsSource = new OutputFolderModeOption[]
+        {
+            new("Рядом с записью", TranscriptOutputFolderMode.SameAsRecording),
+            new("Отдельная папка", TranscriptOutputFolderMode.CustomFolder)
+        };
+    }
+
     public bool TryGetCurrentSettings(out AppSettings settings, bool requireCalendarSettings = false)
     {
         return TryReadFromForm(out settings, requireCalendarSettings);
@@ -112,6 +156,21 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() == Forms.DialogResult.OK)
         {
             OutputFolderBox.Text = dialog.SelectedPath;
+        }
+    }
+
+    private void ChooseTranscriptFolder_Click(object sender, RoutedEventArgs e)
+    {
+        using var dialog = new Forms.FolderBrowserDialog
+        {
+            SelectedPath = string.IsNullOrWhiteSpace(CustomTranscriptOutputFolderBox.Text)
+                ? OutputFolderBox.Text
+                : CustomTranscriptOutputFolderBox.Text
+        };
+
+        if (dialog.ShowDialog() == Forms.DialogResult.OK)
+        {
+            CustomTranscriptOutputFolderBox.Text = dialog.SelectedPath;
         }
     }
 
@@ -172,6 +231,16 @@ public partial class MainWindow : Window
         UpdateSelectedModelStatus();
     }
 
+    private void DiarizationModelBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        UpdateDiarizationControlsState();
+    }
+
+    private void TranscriptOutputFolderModeBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        UpdateTranscriptOutputFolderControlsState();
+    }
+
     private void LoadIntoForm(AppSettings settings)
     {
         CalendarUrlBox.Text = settings.CalendarUrl;
@@ -183,12 +252,27 @@ public partial class MainWindow : Window
         KeepMicrophoneReadyBox.IsChecked = settings.KeepMicrophoneReady;
         StartupBox.IsChecked = settings.StartWithWindows;
         AutoTranscribeBox.IsChecked = settings.Transcription.AutoTranscribeAfterRecording;
-        DiarizationModeBox.IsChecked = settings.Transcription.EnableDiarization;
         if (AsrModelBox.ItemsSource is not null)
         {
             AsrModelBox.SelectedValue = settings.Transcription.SelectedAsrModelId;
         }
 
+        if (DiarizationModelBox.ItemsSource is not null)
+        {
+            DiarizationModelBox.SelectedValue = settings.Transcription.EnableDiarization
+                ? settings.Transcription.SelectedDiarizationModelId
+                : NoDiarizationModelId;
+        }
+
+        SpeakerCountBox.SelectedValue = settings.Transcription.NumSpeakers;
+        TranscriptOutputFolderModeBox.SelectedValue = settings.Transcription.OutputFolderMode;
+        CustomTranscriptOutputFolderBox.Text = settings.Transcription.CustomOutputFolder ?? "";
+        TranscriptTxtFormatBox.IsChecked = settings.Transcription.OutputFormats.Contains(TranscriptOutputFormat.Txt);
+        TranscriptMarkdownFormatBox.IsChecked = settings.Transcription.OutputFormats.Contains(TranscriptOutputFormat.Markdown);
+        TranscriptSrtFormatBox.IsChecked = settings.Transcription.OutputFormats.Contains(TranscriptOutputFormat.Srt);
+        TranscriptJsonFormatBox.IsChecked = settings.Transcription.OutputFormats.Contains(TranscriptOutputFormat.Json);
+        UpdateDiarizationControlsState();
+        UpdateTranscriptOutputFolderControlsState();
         SetRecordingState(false);
     }
 
@@ -207,6 +291,11 @@ public partial class MainWindow : Window
             return false;
         }
 
+        if (!TryReadTranscriptionSettings(out var transcriptionSettings))
+        {
+            return false;
+        }
+
         settings = new AppSettings
         {
             CalendarUrl = calendarUrl,
@@ -217,7 +306,7 @@ public partial class MainWindow : Window
             RetryPromptMinutes = retryMinutes,
             KeepMicrophoneReady = KeepMicrophoneReadyBox.IsChecked == true,
             StartWithWindows = StartupBox.IsChecked == true,
-            Transcription = ReadTranscriptionSettings()
+            Transcription = transcriptionSettings
         };
 
         return true;
@@ -266,17 +355,74 @@ public partial class MainWindow : Window
         return false;
     }
 
-    private TranscriptionSettings ReadTranscriptionSettings()
+    private bool TryReadTranscriptionSettings(out TranscriptionSettings settings)
     {
-        var selectedAsrModelId = SelectedModelId;
-        return _settings.Transcription with
+        settings = _settings.Transcription;
+        var outputFolderMode = TranscriptOutputFolderModeBox.SelectedValue is TranscriptOutputFolderMode selectedOutputFolderMode
+            ? selectedOutputFolderMode
+            : _settings.Transcription.OutputFolderMode;
+        var customOutputFolder = CustomTranscriptOutputFolderBox.Text.Trim();
+
+        if (outputFolderMode == TranscriptOutputFolderMode.CustomFolder
+            && !TryReadRequiredText(CustomTranscriptOutputFolderBox.Text, "Папка транскриптов", out customOutputFolder))
+        {
+            return false;
+        }
+
+        var outputFormats = ReadOutputFormats();
+        if (outputFormats.Count == 0)
+        {
+            System.Windows.MessageBox.Show(
+                "Форматы: выберите хотя бы один формат.",
+                "Некорректные настройки",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return false;
+        }
+
+        var selectedAsrModelId = SelectedAsrModelId;
+        var (enableDiarization, selectedDiarizationModelId) =
+            MainWindowTranscriptionSettings.ResolveDiarizationSelection(SelectedDiarizationModelId, _settings.Transcription);
+        settings = _settings.Transcription with
         {
             AutoTranscribeAfterRecording = AutoTranscribeBox.IsChecked == true,
             SelectedAsrModelId = string.IsNullOrWhiteSpace(selectedAsrModelId)
                 ? _settings.Transcription.SelectedAsrModelId
                 : selectedAsrModelId,
-            EnableDiarization = DiarizationModeBox.IsChecked == true
+            EnableDiarization = enableDiarization,
+            SelectedDiarizationModelId = selectedDiarizationModelId,
+            NumSpeakers = SpeakerCountBox.SelectedValue is int numSpeakers ? numSpeakers : null,
+            OutputFolderMode = outputFolderMode,
+            CustomOutputFolder = string.IsNullOrWhiteSpace(customOutputFolder) ? null : customOutputFolder,
+            OutputFormats = outputFormats
         };
+        return true;
+    }
+
+    private IReadOnlyList<TranscriptOutputFormat> ReadOutputFormats()
+    {
+        var formats = new List<TranscriptOutputFormat>();
+        if (TranscriptTxtFormatBox.IsChecked == true)
+        {
+            formats.Add(TranscriptOutputFormat.Txt);
+        }
+
+        if (TranscriptMarkdownFormatBox.IsChecked == true)
+        {
+            formats.Add(TranscriptOutputFormat.Markdown);
+        }
+
+        if (TranscriptSrtFormatBox.IsChecked == true)
+        {
+            formats.Add(TranscriptOutputFormat.Srt);
+        }
+
+        if (TranscriptJsonFormatBox.IsChecked == true)
+        {
+            formats.Add(TranscriptOutputFormat.Json);
+        }
+
+        return formats;
     }
 
     private void UpdateSelectedModelStatus()
@@ -290,10 +436,42 @@ public partial class MainWindow : Window
         SelectedModelStatusText.Text = "Модель не выбрана";
     }
 
+    private void UpdateDiarizationControlsState()
+    {
+        var enabled = !string.IsNullOrWhiteSpace(SelectedDiarizationModelId);
+        SpeakerCountBox.IsEnabled = enabled;
+    }
+
+    private void UpdateTranscriptOutputFolderControlsState()
+    {
+        var customFolderSelected = TranscriptOutputFolderModeBox.SelectedValue is TranscriptOutputFolderMode.CustomFolder;
+        CustomTranscriptOutputFolderBox.IsEnabled = customFolderSelected;
+        ChooseTranscriptFolderButton.IsEnabled = customFolderSelected;
+    }
+
     private static string FormatJobStatus(TranscriptionJob job)
     {
         return job.Status == TranscriptionJobStatus.Failed && !string.IsNullOrWhiteSpace(job.ErrorMessage)
             ? $"{job.Status}: {job.ErrorMessage}"
             : job.Status.ToString();
+    }
+
+    private sealed record SpeakerCountOption(string DisplayName, int? Value);
+
+    private sealed record OutputFolderModeOption(string DisplayName, TranscriptOutputFolderMode Value);
+}
+
+public static class MainWindowTranscriptionSettings
+{
+    public static (bool EnableDiarization, string SelectedDiarizationModelId) ResolveDiarizationSelection(
+        string? selectedDiarizationModelId,
+        TranscriptionSettings currentSettings)
+    {
+        if (selectedDiarizationModelId is null)
+        {
+            return (currentSettings.EnableDiarization, currentSettings.SelectedDiarizationModelId);
+        }
+
+        return (!string.IsNullOrWhiteSpace(selectedDiarizationModelId), selectedDiarizationModelId);
     }
 }
