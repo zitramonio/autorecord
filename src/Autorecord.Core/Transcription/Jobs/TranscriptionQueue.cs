@@ -22,6 +22,8 @@ public sealed class TranscriptionQueue
         _clock = clock;
     }
 
+    public event EventHandler? JobsChanged;
+
     public IReadOnlyList<TranscriptionJob> Jobs
     {
         get
@@ -40,6 +42,8 @@ public sealed class TranscriptionQueue
         {
             _jobs = jobs;
         }
+
+        OnJobsChanged();
     }
 
     public async Task<TranscriptionJob> EnqueueAsync(
@@ -69,6 +73,7 @@ public sealed class TranscriptionQueue
         }
 
         await SaveAsync(jobs, cancellationToken);
+        OnJobsChanged();
         return job;
     }
 
@@ -83,9 +88,13 @@ public sealed class TranscriptionQueue
             }
 
             await SaveAsync(jobs, cancellationToken);
+            OnJobsChanged();
 
             var progress = new JobProgress(value =>
-                UpdateJob(index, job => job with { ProgressPercent = Math.Clamp(value, 0, 100) }));
+            {
+                UpdateJob(index, job => job with { ProgressPercent = Math.Clamp(value, 0, 100) });
+                OnJobsChanged();
+            });
 
             TranscriptionPipelineResult result;
             try
@@ -101,6 +110,7 @@ public sealed class TranscriptionQueue
                     ErrorMessage = "Transcription job was cancelled."
                 });
                 await SaveAsync(jobs, CancellationToken.None);
+                OnJobsChanged();
                 return;
             }
             catch (Exception ex)
@@ -112,6 +122,7 @@ public sealed class TranscriptionQueue
                     ErrorMessage = ex.Message
                 });
                 await SaveAsync(jobs, CancellationToken.None);
+                OnJobsChanged();
                 return;
             }
 
@@ -123,6 +134,7 @@ public sealed class TranscriptionQueue
                 OutputFiles = result.OutputFiles
             });
             await SaveAsync(jobs, CancellationToken.None);
+            OnJobsChanged();
         }
         finally
         {
@@ -189,6 +201,11 @@ public sealed class TranscriptionQueue
         {
             _repositoryGate.Release();
         }
+    }
+
+    private void OnJobsChanged()
+    {
+        JobsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private sealed class JobProgress(Action<int> report) : IProgress<int>

@@ -24,6 +24,7 @@ namespace Autorecord.App;
 public partial class App : System.Windows.Application
 {
     private readonly object _eventsGate = new();
+    private readonly object _settingsGate = new();
     private readonly HashSet<DateTimeOffset> _handledStartsAt = [];
     private readonly SemaphoreSlim _calendarRefreshGate = new(1, 1);
     private readonly CancellationTokenSource _shutdown = new();
@@ -130,7 +131,7 @@ public partial class App : System.Windows.Application
 
     private void MainWindow_RefreshCalendarRequested(object? sender, AppSettings settings)
     {
-        _settings = settings;
+        SetCurrentSettings(settings);
         _ = RefreshCalendarAsync(_shutdown.Token);
     }
 
@@ -190,7 +191,7 @@ public partial class App : System.Windows.Application
 
         try
         {
-            _settings = settings;
+            SetCurrentSettings(settings);
             var startsAt = DateTimeOffset.Now;
             var manualEvent = new CalendarEvent("Ручная запись", startsAt, startsAt);
             await _recordingCoordinator.StartAsync(manualEvent, settings, cancellationToken);
@@ -249,8 +250,7 @@ public partial class App : System.Windows.Application
             }
 
             await _settingsStore.SaveAsync(settings, cancellationToken);
-            _settings = settings;
-            await RebuildTranscriptionQueueAsync(settings.Transcription, cancellationToken);
+            SetCurrentSettings(settings);
             _ = ApplyRecorderReadinessAsync(settings, cancellationToken);
             _ = RecoverPendingRecordingsAsync(settings.OutputFolder, cancellationToken);
             SetStatus("Настройки сохранены.");
@@ -568,35 +568,19 @@ public partial class App : System.Windows.Application
         _modelManager = new ModelManager(GetAppDataPath("Models"));
         _modelDownloadService = new ModelDownloadService(_httpClient, GetAppDataPath("Temp", "Downloads"));
         _transcriptionJobRepository = new TranscriptionJobRepository(GetAppDataPath("transcription-jobs.json"));
-        await RebuildTranscriptionQueueAsync(settings, cancellationToken);
+
+        var pipeline = new CurrentSettingsTranscriptionPipeline(
+            GetCurrentTranscriptionSettings,
+            CreateTranscriptionPipeline);
+        _transcriptionQueue = new TranscriptionQueue(_transcriptionJobRepository, pipeline, () => DateTimeOffset.Now);
+        _transcriptionQueue.JobsChanged += TranscriptionQueue_JobsChanged;
+        await _transcriptionQueue.InitializeAsync(cancellationToken);
         await RefreshModelListAsync(cancellationToken);
         RefreshTranscriptionJobs();
     }
 
-    private async Task RebuildTranscriptionQueueAsync(TranscriptionSettings settings, CancellationToken cancellationToken)
+    private void TranscriptionQueue_JobsChanged(object? sender, EventArgs e)
     {
-        if (_modelCatalog is null || _modelManager is null || _transcriptionJobRepository is null)
-        {
-            return;
-        }
-
-        var gigaAmWorkerPath = GetAppDataPath("Workers", "GigaAM", "worker.exe");
-        var engines = new Dictionary<string, ITranscriptionEngine>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["sherpa-onnx"] = new SherpaOnnxTranscriptionEngine(),
-            ["gigaam-v3"] = new GigaAmV3TranscriptionEngine(gigaAmWorkerPath, new GigaAmWorkerClient())
-        };
-        var pipeline = new TranscriptionPipeline(
-            _modelCatalog,
-            _modelManager,
-            new AudioNormalizer(GetAppDataPath("Temp")),
-            engines,
-            new DiarizationEngine(),
-            new TranscriptExporter(),
-            settings);
-
-        _transcriptionQueue = new TranscriptionQueue(_transcriptionJobRepository, pipeline, () => DateTimeOffset.Now);
-        await _transcriptionQueue.InitializeAsync(cancellationToken);
         RefreshTranscriptionJobs();
     }
 
@@ -653,7 +637,9 @@ public partial class App : System.Windows.Application
 
         try
         {
-            await _modelManager.DeleteAsync(model, cancellationToken);
+            await Task.Run(
+                () => _modelManager.DeleteAsync(model, cancellationToken).GetAwaiter().GetResult(),
+                cancellationToken);
             var status = await _modelManager.GetStatusAsync(model, cancellationToken);
             SetStatus($"Модель удалена. Статус: {status}.");
             await RefreshModelListAsync(cancellationToken);
@@ -733,8 +719,7 @@ public partial class App : System.Windows.Application
 
         try
         {
-            _settings = settings;
-            await RebuildTranscriptionQueueAsync(settings.Transcription, cancellationToken);
+            SetCurrentSettings(settings);
             var outputDirectory = ResolveTranscriptionOutputDirectory(dialog.FileName, settings.Transcription);
             var diarizationModelId = settings.Transcription.EnableDiarization
                 ? settings.Transcription.SelectedDiarizationModelId
@@ -833,6 +818,46 @@ public partial class App : System.Windows.Application
         Dispatcher.BeginInvoke(() => _mainWindow.SetTranscriptionJobs(_transcriptionQueue.Jobs));
     }
 
+    private TranscriptionPipeline CreateTranscriptionPipeline(TranscriptionSettings settings)
+    {
+        if (_modelCatalog is null || _modelManager is null)
+        {
+            throw new InvalidOperationException("Transcription services are not initialized.");
+        }
+
+        var gigaAmWorkerPath = GetAppDataPath("Workers", "GigaAM", "worker.exe");
+        var engines = new Dictionary<string, ITranscriptionEngine>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["sherpa-onnx"] = new SherpaOnnxTranscriptionEngine(),
+            ["gigaam-v3"] = new GigaAmV3TranscriptionEngine(gigaAmWorkerPath, new GigaAmWorkerClient())
+        };
+
+        return new TranscriptionPipeline(
+            _modelCatalog,
+            _modelManager,
+            new AudioNormalizer(GetAppDataPath("Temp")),
+            engines,
+            new DiarizationEngine(),
+            new TranscriptExporter(),
+            settings);
+    }
+
+    private TranscriptionSettings GetCurrentTranscriptionSettings()
+    {
+        lock (_settingsGate)
+        {
+            return _settings.Transcription;
+        }
+    }
+
+    private void SetCurrentSettings(AppSettings settings)
+    {
+        lock (_settingsGate)
+        {
+            _settings = settings;
+        }
+    }
+
     private void SetSelectedModelStatus(string status)
     {
         if (_mainWindow is null)
@@ -901,5 +926,20 @@ public partial class App : System.Windows.Application
     {
         return Path.Combine(
             [Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Autorecord", .. parts]);
+    }
+
+    private sealed class CurrentSettingsTranscriptionPipeline(
+        Func<TranscriptionSettings> getSettings,
+        Func<TranscriptionSettings, ITranscriptionPipeline> createPipeline)
+        : ITranscriptionPipeline
+    {
+        public Task<TranscriptionPipelineResult> RunAsync(
+            TranscriptionJob job,
+            IProgress<int> progress,
+            CancellationToken cancellationToken)
+        {
+            var pipeline = createPipeline(getSettings());
+            return pipeline.RunAsync(job, progress, cancellationToken);
+        }
     }
 }

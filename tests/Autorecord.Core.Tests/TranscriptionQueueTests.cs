@@ -34,6 +34,33 @@ public sealed class TranscriptionQueueTests
     }
 
     [Fact]
+    public async Task JobsChangedFiresWhenJobProgressChanges()
+    {
+        var repository = new TranscriptionJobRepository(CreateTempPath());
+        var pipeline = new FakePipeline(
+            (_, progress, _) =>
+            {
+                progress.Report(42);
+                return Task.FromResult(new TranscriptionPipelineResult(["C:\\Transcripts\\meeting.md"]));
+            });
+        var queue = new TranscriptionQueue(repository, pipeline, FixedClock);
+        var snapshots = new List<IReadOnlyList<TranscriptionJob>>();
+        queue.JobsChanged += (_, _) => snapshots.Add(queue.Jobs);
+
+        await queue.EnqueueAsync(
+            "C:\\Records\\meeting.wav",
+            "C:\\Transcripts",
+            "asr-fast",
+            null,
+            CancellationToken.None);
+        await queue.RunNextAsync(CancellationToken.None);
+
+        Assert.Contains(snapshots, jobs => jobs.Single().Status == TranscriptionJobStatus.Running);
+        Assert.Contains(snapshots, jobs => jobs.Single().ProgressPercent == 42);
+        Assert.Contains(snapshots, jobs => jobs.Single().Status == TranscriptionJobStatus.Completed);
+    }
+
+    [Fact]
     public async Task InitializeAsyncRestoresPersistedJobs()
     {
         var repository = new TranscriptionJobRepository(CreateTempPath());
