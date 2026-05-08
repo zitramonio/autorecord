@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Windows;
+using Autorecord.App.Transcription;
 using Autorecord.Core.Settings;
+using Autorecord.Core.Transcription.Jobs;
 using Forms = System.Windows.Forms;
 
 namespace Autorecord.App;
@@ -26,6 +28,7 @@ public partial class MainWindow : Window
     public event EventHandler? PickFileForTranscriptionRequested;
 
     public bool AllowClose { get; set; }
+    public string? SelectedModelId => AsrModelBox.SelectedValue as string;
 
     public void SetSettings(AppSettings settings)
     {
@@ -45,6 +48,47 @@ public partial class MainWindow : Window
             : details ?? "Запись не идет";
         StartRecordingButton.IsEnabled = !isRecording;
         StopRecordingButton.IsEnabled = isRecording;
+    }
+
+    public void SetModels(IReadOnlyList<ModelListItemViewModel> models)
+    {
+        var selectedModelId = SelectedModelId ?? _settings.Transcription.SelectedAsrModelId;
+        AsrModelBox.ItemsSource = models;
+        AsrModelBox.SelectedValue = models.Any(model => model.Id == selectedModelId)
+            ? selectedModelId
+            : models.FirstOrDefault()?.Id;
+        UpdateSelectedModelStatus();
+    }
+
+    public void SetSelectedModelStatus(string status)
+    {
+        SelectedModelStatusText.Text = status;
+    }
+
+    public void SetModelDownloadProgress(int percent)
+    {
+        ModelDownloadProgress.Value = Math.Clamp(percent, 0, 100);
+    }
+
+    public void SetTranscriptionJobs(IReadOnlyList<TranscriptionJob> jobs)
+    {
+        TranscriptionJobsGrid.ItemsSource = jobs
+            .OrderByDescending(job => job.CreatedAt)
+            .Select(job => new
+            {
+                File = job.InputFilePath,
+                Model = job.AsrModelId,
+                Status = FormatJobStatus(job),
+                Progress = $"{job.ProgressPercent}%",
+                CreatedAt = job.CreatedAt.ToLocalTime().ToString("g"),
+                CompletedAt = job.FinishedAt?.ToLocalTime().ToString("g") ?? ""
+            })
+            .ToArray();
+    }
+
+    public bool TryGetCurrentSettings(out AppSettings settings, bool requireCalendarSettings = false)
+    {
+        return TryReadFromForm(out settings, requireCalendarSettings);
     }
 
     private void RefreshCalendar_Click(object sender, RoutedEventArgs e)
@@ -123,6 +167,11 @@ public partial class MainWindow : Window
         PickFileForTranscriptionRequested?.Invoke(this, EventArgs.Empty);
     }
 
+    private void AsrModelBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        UpdateSelectedModelStatus();
+    }
+
     private void LoadIntoForm(AppSettings settings)
     {
         CalendarUrlBox.Text = settings.CalendarUrl;
@@ -133,6 +182,13 @@ public partial class MainWindow : Window
         RetryMinutesBox.Text = settings.RetryPromptMinutes.ToString();
         KeepMicrophoneReadyBox.IsChecked = settings.KeepMicrophoneReady;
         StartupBox.IsChecked = settings.StartWithWindows;
+        AutoTranscribeBox.IsChecked = settings.Transcription.AutoTranscribeAfterRecording;
+        DiarizationModeBox.IsChecked = settings.Transcription.EnableDiarization;
+        if (AsrModelBox.ItemsSource is not null)
+        {
+            AsrModelBox.SelectedValue = settings.Transcription.SelectedAsrModelId;
+        }
+
         SetRecordingState(false);
     }
 
@@ -161,7 +217,7 @@ public partial class MainWindow : Window
             RetryPromptMinutes = retryMinutes,
             KeepMicrophoneReady = KeepMicrophoneReadyBox.IsChecked == true,
             StartWithWindows = StartupBox.IsChecked == true,
-            Transcription = _settings.Transcription
+            Transcription = ReadTranscriptionSettings()
         };
 
         return true;
@@ -208,5 +264,36 @@ public partial class MainWindow : Window
             MessageBoxButton.OK,
             MessageBoxImage.Warning);
         return false;
+    }
+
+    private TranscriptionSettings ReadTranscriptionSettings()
+    {
+        var selectedAsrModelId = SelectedModelId;
+        return _settings.Transcription with
+        {
+            AutoTranscribeAfterRecording = AutoTranscribeBox.IsChecked == true,
+            SelectedAsrModelId = string.IsNullOrWhiteSpace(selectedAsrModelId)
+                ? _settings.Transcription.SelectedAsrModelId
+                : selectedAsrModelId,
+            EnableDiarization = DiarizationModeBox.IsChecked == true
+        };
+    }
+
+    private void UpdateSelectedModelStatus()
+    {
+        if (AsrModelBox.SelectedItem is ModelListItemViewModel model)
+        {
+            SelectedModelStatusText.Text = $"Статус модели: {model.Status}";
+            return;
+        }
+
+        SelectedModelStatusText.Text = "Модель не выбрана";
+    }
+
+    private static string FormatJobStatus(TranscriptionJob job)
+    {
+        return job.Status == TranscriptionJobStatus.Failed && !string.IsNullOrWhiteSpace(job.ErrorMessage)
+            ? $"{job.Status}: {job.ErrorMessage}"
+            : job.Status.ToString();
     }
 }

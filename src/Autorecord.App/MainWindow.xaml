@@ -104,7 +104,8 @@
                     <ComboBox x:Name="AsrModelBox"
                               Margin="0,6,0,0"
                               DisplayMemberPath="DisplayName"
-                              SelectedValuePath="Id" />
+                              SelectedValuePath="Id"
+                              SelectionChanged="AsrModelBox_SelectionChanged" />
                     <CheckBox x:Name="DiarizationModeBox"
                               Margin="0,12,0,0"
                               Content="Определять спикеров" />

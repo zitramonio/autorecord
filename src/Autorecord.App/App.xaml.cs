@@ -1,6 +1,8 @@
 using System.IO;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Windows;
+using Autorecord.App.Transcription;
 using Autorecord.App.Dialogs;
 using Autorecord.App.Notifications;
 using Autorecord.App.Tray;
@@ -10,6 +12,12 @@ using Autorecord.Core.Recording;
 using Autorecord.Core.Scheduling;
 using Autorecord.Core.Settings;
 using Autorecord.Core.Startup;
+using Autorecord.Core.Transcription.Diarization;
+using Autorecord.Core.Transcription.Engines;
+using Autorecord.Core.Transcription.Jobs;
+using Autorecord.Core.Transcription.Models;
+using Autorecord.Core.Transcription.Pipeline;
+using Autorecord.Core.Transcription.Results;
 
 namespace Autorecord.App;
 
@@ -27,7 +35,13 @@ public partial class App : System.Windows.Application
     private HttpClient? _httpClient;
     private TrayIconHost? _trayIconHost;
     private WpfNotificationService? _notificationService;
+    private TranscriptionNotificationService? _transcriptionNotificationService;
     private MainWindow? _mainWindow;
+    private ModelCatalog? _modelCatalog;
+    private ModelManager? _modelManager;
+    private ModelDownloadService? _modelDownloadService;
+    private TranscriptionJobRepository? _transcriptionJobRepository;
+    private TranscriptionQueue? _transcriptionQueue;
     private AppSettings _settings = new();
     private IReadOnlyList<CalendarEvent> _events = [];
     private Task? _calendarLoop;
@@ -52,10 +66,16 @@ public partial class App : System.Windows.Application
         _mainWindow = new MainWindow();
         _trayIconHost = new TrayIconHost(_mainWindow);
         _notificationService = new WpfNotificationService(_trayIconHost);
+        _transcriptionNotificationService = new TranscriptionNotificationService(_notificationService);
         _mainWindow.RefreshCalendarRequested += MainWindow_RefreshCalendarRequested;
         _mainWindow.SettingsSaved += MainWindow_SettingsSaved;
         _mainWindow.ManualRecordingStartRequested += MainWindow_ManualRecordingStartRequested;
         _mainWindow.ManualRecordingStopRequested += MainWindow_ManualRecordingStopRequested;
+        _mainWindow.DownloadSelectedModelRequested += MainWindow_DownloadSelectedModelRequested;
+        _mainWindow.DeleteSelectedModelRequested += MainWindow_DeleteSelectedModelRequested;
+        _mainWindow.ValidateSelectedModelRequested += MainWindow_ValidateSelectedModelRequested;
+        _mainWindow.OpenModelsFolderRequested += MainWindow_OpenModelsFolderRequested;
+        _mainWindow.PickFileForTranscriptionRequested += MainWindow_PickFileForTranscriptionRequested;
 
         try
         {
@@ -68,6 +88,15 @@ public partial class App : System.Windows.Application
         catch (Exception ex)
         {
             _mainWindow.SetStatus($"Не удалось загрузить настройки: {ex.Message}");
+        }
+
+        try
+        {
+            await InitializeTranscriptionAsync(_settings.Transcription, _shutdown.Token);
+        }
+        catch (Exception ex)
+        {
+            _mainWindow.SetStatus($"Не удалось инициализировать транскрибацию: {ex.Message}");
         }
 
         if (e.Args.Contains("--minimized", StringComparer.OrdinalIgnoreCase))
@@ -118,6 +147,31 @@ public partial class App : System.Windows.Application
     private void MainWindow_ManualRecordingStopRequested(object? sender, EventArgs e)
     {
         _ = StopManualRecordingAsync(_shutdown.Token);
+    }
+
+    private void MainWindow_DownloadSelectedModelRequested(object? sender, EventArgs e)
+    {
+        _ = DownloadSelectedModelAsync(_shutdown.Token);
+    }
+
+    private void MainWindow_DeleteSelectedModelRequested(object? sender, EventArgs e)
+    {
+        _ = DeleteSelectedModelAsync(_shutdown.Token);
+    }
+
+    private void MainWindow_ValidateSelectedModelRequested(object? sender, EventArgs e)
+    {
+        _ = ValidateSelectedModelAsync(_shutdown.Token);
+    }
+
+    private void MainWindow_OpenModelsFolderRequested(object? sender, EventArgs e)
+    {
+        OpenModelsFolder();
+    }
+
+    private void MainWindow_PickFileForTranscriptionRequested(object? sender, EventArgs e)
+    {
+        _ = PickFileForTranscriptionAsync(_shutdown.Token);
     }
 
     private async Task StartManualRecordingAsync(AppSettings settings, CancellationToken cancellationToken)
@@ -196,6 +250,7 @@ public partial class App : System.Windows.Application
 
             await _settingsStore.SaveAsync(settings, cancellationToken);
             _settings = settings;
+            await RebuildTranscriptionQueueAsync(settings.Transcription, cancellationToken);
             _ = ApplyRecorderReadinessAsync(settings, cancellationToken);
             _ = RecoverPendingRecordingsAsync(settings.OutputFolder, cancellationToken);
             SetStatus("Настройки сохранены.");
@@ -501,11 +556,350 @@ public partial class App : System.Windows.Application
         }
     }
 
+    private async Task InitializeTranscriptionAsync(TranscriptionSettings settings, CancellationToken cancellationToken)
+    {
+        if (_httpClient is null || _mainWindow is null)
+        {
+            return;
+        }
+
+        var catalogPath = ResolveModelCatalogPath();
+        _modelCatalog = await ModelCatalog.LoadAsync(catalogPath, cancellationToken);
+        _modelManager = new ModelManager(GetAppDataPath("Models"));
+        _modelDownloadService = new ModelDownloadService(_httpClient, GetAppDataPath("Temp", "Downloads"));
+        _transcriptionJobRepository = new TranscriptionJobRepository(GetAppDataPath("transcription-jobs.json"));
+        await RebuildTranscriptionQueueAsync(settings, cancellationToken);
+        await RefreshModelListAsync(cancellationToken);
+        RefreshTranscriptionJobs();
+    }
+
+    private async Task RebuildTranscriptionQueueAsync(TranscriptionSettings settings, CancellationToken cancellationToken)
+    {
+        if (_modelCatalog is null || _modelManager is null || _transcriptionJobRepository is null)
+        {
+            return;
+        }
+
+        var gigaAmWorkerPath = GetAppDataPath("Workers", "GigaAM", "worker.exe");
+        var engines = new Dictionary<string, ITranscriptionEngine>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["sherpa-onnx"] = new SherpaOnnxTranscriptionEngine(),
+            ["gigaam-v3"] = new GigaAmV3TranscriptionEngine(gigaAmWorkerPath, new GigaAmWorkerClient())
+        };
+        var pipeline = new TranscriptionPipeline(
+            _modelCatalog,
+            _modelManager,
+            new AudioNormalizer(GetAppDataPath("Temp")),
+            engines,
+            new DiarizationEngine(),
+            new TranscriptExporter(),
+            settings);
+
+        _transcriptionQueue = new TranscriptionQueue(_transcriptionJobRepository, pipeline, () => DateTimeOffset.Now);
+        await _transcriptionQueue.InitializeAsync(cancellationToken);
+        RefreshTranscriptionJobs();
+    }
+
+    private async Task RefreshModelListAsync(CancellationToken cancellationToken)
+    {
+        if (_modelCatalog is null || _modelManager is null || _mainWindow is null)
+        {
+            return;
+        }
+
+        var models = new List<ModelListItemViewModel>();
+        foreach (var model in _modelCatalog.GetByType("asr"))
+        {
+            var status = await _modelManager.GetStatusAsync(model, cancellationToken);
+            models.Add(new ModelListItemViewModel(model.Id, model.DisplayName, model.Type, status.ToString()));
+        }
+
+        _ = Dispatcher.BeginInvoke(() => _mainWindow.SetModels(models));
+    }
+
+    private async Task DownloadSelectedModelAsync(CancellationToken cancellationToken)
+    {
+        if (!TryGetSelectedModel(out var model) || _modelDownloadService is null || _modelManager is null)
+        {
+            return;
+        }
+
+        try
+        {
+            SetModelDownloadProgress(0);
+            SetStatus($"Скачивание модели: {model.DisplayName}");
+            var progress = new Progress<ModelDownloadProgress>(value => SetModelDownloadProgress(value.Percent));
+            var tempPath = await _modelDownloadService.DownloadAsync(model, progress, cancellationToken);
+            var status = await _modelManager.GetStatusAsync(model, cancellationToken);
+            SetModelDownloadProgress(100);
+            SetStatus($"Модель скачана во временный файл: {tempPath}. Установка не выполнена. Статус: {status}.");
+            await RefreshModelListAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Не удалось скачать модель: {ex.Message}");
+        }
+    }
+
+    private async Task DeleteSelectedModelAsync(CancellationToken cancellationToken)
+    {
+        if (!TryGetSelectedModel(out var model) || _modelManager is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _modelManager.DeleteAsync(model, cancellationToken);
+            var status = await _modelManager.GetStatusAsync(model, cancellationToken);
+            SetStatus($"Модель удалена. Статус: {status}.");
+            await RefreshModelListAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Не удалось удалить модель: {ex.Message}");
+        }
+    }
+
+    private async Task ValidateSelectedModelAsync(CancellationToken cancellationToken)
+    {
+        if (!TryGetSelectedModel(out var model) || _modelManager is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var status = await _modelManager.GetStatusAsync(model, cancellationToken);
+            SetSelectedModelStatus($"Статус модели: {status}");
+            SetStatus($"Проверка модели завершена: {status}.");
+            await RefreshModelListAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Не удалось проверить модель: {ex.Message}");
+        }
+    }
+
+    private void OpenModelsFolder()
+    {
+        if (_modelManager is null)
+        {
+            SetStatus("Папка моделей недоступна: сервис моделей не инициализирован.");
+            return;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(_modelManager.ModelsRoot);
+            Process.Start(new ProcessStartInfo(_modelManager.ModelsRoot) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Не удалось открыть папку моделей: {ex.Message}");
+        }
+    }
+
+    private async Task PickFileForTranscriptionAsync(CancellationToken cancellationToken)
+    {
+        if (_mainWindow is null)
+        {
+            return;
+        }
+
+        if (!_mainWindow.TryGetCurrentSettings(out var settings))
+        {
+            return;
+        }
+
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Filter = "Audio and video|*.wav;*.mp3;*.m4a;*.flac;*.ogg;*.mp4;*.mkv|All files|*.*"
+        };
+
+        if (dialog.ShowDialog(_mainWindow) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            _settings = settings;
+            await RebuildTranscriptionQueueAsync(settings.Transcription, cancellationToken);
+            var outputDirectory = ResolveTranscriptionOutputDirectory(dialog.FileName, settings.Transcription);
+            var diarizationModelId = settings.Transcription.EnableDiarization
+                ? settings.Transcription.SelectedDiarizationModelId
+                : null;
+
+            if (_transcriptionQueue is null)
+            {
+                SetStatus("Очередь транскрибации не инициализирована.");
+                return;
+            }
+
+            await _transcriptionQueue.EnqueueAsync(
+                dialog.FileName,
+                outputDirectory,
+                settings.Transcription.SelectedAsrModelId,
+                diarizationModelId,
+                cancellationToken);
+            RefreshTranscriptionJobs();
+            SetStatus("Файл добавлен в очередь транскрибации.");
+            _ = RunNextTranscriptionJobAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Не удалось поставить файл в очередь: {ex.Message}");
+        }
+    }
+
+    private async Task RunNextTranscriptionJobAsync(CancellationToken cancellationToken)
+    {
+        if (_transcriptionQueue is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _transcriptionQueue.RunNextAsync(cancellationToken);
+            RefreshTranscriptionJobs();
+            var lastFinishedJob = _transcriptionQueue.Jobs
+                .Where(job => job.FinishedAt is not null)
+                .OrderByDescending(job => job.FinishedAt)
+                .FirstOrDefault();
+            if (lastFinishedJob is not null)
+            {
+                _transcriptionNotificationService?.ShowFinished(lastFinishedJob);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Не удалось выполнить задачу транскрибации: {ex.Message}");
+            RefreshTranscriptionJobs();
+        }
+    }
+
+    private bool TryGetSelectedModel(out ModelCatalogEntry model)
+    {
+        model = new ModelCatalogEntry();
+        if (_modelCatalog is null || _mainWindow is null)
+        {
+            SetStatus("Каталог моделей не загружен.");
+            return false;
+        }
+
+        var modelId = _mainWindow.SelectedModelId;
+        if (string.IsNullOrWhiteSpace(modelId))
+        {
+            SetStatus("Выберите модель.");
+            return false;
+        }
+
+        try
+        {
+            model = _modelCatalog.GetRequired(modelId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Модель не найдена: {ex.Message}");
+            return false;
+        }
+    }
+
+    private void RefreshTranscriptionJobs()
+    {
+        if (_mainWindow is null || _transcriptionQueue is null)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(() => _mainWindow.SetTranscriptionJobs(_transcriptionQueue.Jobs));
+    }
+
+    private void SetSelectedModelStatus(string status)
+    {
+        if (_mainWindow is null)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(() => _mainWindow.SetSelectedModelStatus(status));
+    }
+
+    private void SetModelDownloadProgress(int percent)
+    {
+        if (_mainWindow is null)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(() => _mainWindow.SetModelDownloadProgress(percent));
+    }
+
+    private static string ResolveModelCatalogPath()
+    {
+        var baseDirectoryPath = Path.Combine(AppContext.BaseDirectory, "models", "catalog.json");
+        if (File.Exists(baseDirectoryPath))
+        {
+            return baseDirectoryPath;
+        }
+
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            var candidate = Path.Combine(directory.FullName, "models", "catalog.json");
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            directory = directory.Parent;
+        }
+
+        return baseDirectoryPath;
+    }
+
+    private static string ResolveTranscriptionOutputDirectory(string inputFilePath, TranscriptionSettings settings)
+    {
+        return settings.OutputFolderMode switch
+        {
+            TranscriptOutputFolderMode.SameAsRecording => Path.GetDirectoryName(inputFilePath)
+                ?? throw new InvalidOperationException("Не удалось определить папку исходного файла."),
+            TranscriptOutputFolderMode.CustomFolder => string.IsNullOrWhiteSpace(settings.CustomOutputFolder)
+                ? throw new InvalidOperationException("Укажите папку для сохранения транскриптов.")
+                : settings.CustomOutputFolder,
+            _ => throw new InvalidOperationException($"Неизвестный режим папки транскриптов: {settings.OutputFolderMode}.")
+        };
+    }
+
     private static string GetSettingsPath()
     {
         return Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "Autorecord",
             "settings.json");
+    }
+
+    private static string GetAppDataPath(params string[] parts)
+    {
+        return Path.Combine(
+            [Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Autorecord", .. parts]);
     }
 }
