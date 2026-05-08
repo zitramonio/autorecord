@@ -62,6 +62,98 @@ public sealed class SherpaOnnxTranscriptionEngineTests
         }
     }
 
+    [Fact]
+    public async Task TranscribeAsyncProcessesLongWavInPaddedChunks()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            CreateRequiredModelFiles(root);
+            var wavPath = Path.Combine(root, "long.wav");
+            CreatePcm16MonoWav(wavPath, durationSeconds: 45);
+
+            var decoder = new RecordingChunkDecoder("first", "second", "third");
+            var engine = new SherpaOnnxTranscriptionEngine(new RecordingChunkDecoderFactory(decoder));
+            var progress = new CollectingProgress();
+
+            var result = await engine.TranscribeAsync(wavPath, root, progress, CancellationToken.None);
+
+            Assert.Equal(3, decoder.SampleCounts.Count);
+            Assert.All(decoder.SampleCounts, sampleCount => Assert.True(sampleCount < 45 * 16_000));
+            Assert.Equal([20.25, 20.5, 5.25], decoder.SampleCounts.Select(count => count / 16_000d));
+            Assert.Equal([0, 44, 88, 100], progress.Values);
+            Assert.Equal(
+                [(0d, 20d, "first"), (20d, 40d, "second"), (40d, 45d, "third")],
+                result.Segments.Select(segment => (segment.Start, segment.End, segment.Text)));
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task TranscribeAsyncHonorsCancellationBetweenChunks()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            CreateRequiredModelFiles(root);
+            var wavPath = Path.Combine(root, "long.wav");
+            CreatePcm16MonoWav(wavPath, durationSeconds: 45);
+
+            using var cancellation = new CancellationTokenSource();
+            var decoder = new RecordingChunkDecoder("first", "second", "third");
+            var engine = new SherpaOnnxTranscriptionEngine(new RecordingChunkDecoderFactory(decoder));
+            var progress = new CallbackProgress(value =>
+            {
+                if (value > 0)
+                {
+                    cancellation.Cancel();
+                }
+            });
+
+            await Assert.ThrowsAsync<OperationCanceledException>(
+                () => engine.TranscribeAsync(wavPath, root, progress, cancellation.Token));
+            Assert.Single(decoder.SampleCounts);
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task TranscribeAsyncReturnsCompletedResultWhenCancellationIsRequestedAfterFinalProgress()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            CreateRequiredModelFiles(root);
+            var wavPath = Path.Combine(root, "short.wav");
+            CreatePcm16MonoWav(wavPath, durationSeconds: 5);
+
+            using var cancellation = new CancellationTokenSource();
+            var decoder = new RecordingChunkDecoder("done");
+            var engine = new SherpaOnnxTranscriptionEngine(new RecordingChunkDecoderFactory(decoder));
+            var progress = new CallbackProgress(value =>
+            {
+                if (value == 100)
+                {
+                    cancellation.Cancel();
+                }
+            });
+
+            var result = await engine.TranscribeAsync(wavPath, root, progress, cancellation.Token);
+
+            Assert.Equal("done", Assert.Single(result.Segments).Text);
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
     private static string CreateTempDirectory()
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -69,11 +161,94 @@ public sealed class SherpaOnnxTranscriptionEngineTests
         return path;
     }
 
+    private static void CreateRequiredModelFiles(string root)
+    {
+        File.WriteAllText(Path.Combine(root, "tokens.txt"), "test");
+        File.WriteAllText(Path.Combine(root, "model.int8.onnx"), "test");
+    }
+
+    private static void CreatePcm16MonoWav(string path, int durationSeconds)
+    {
+        const int sampleRate = 16_000;
+        const short channelCount = 1;
+        const short bitsPerSample = 16;
+        const short blockAlign = channelCount * bitsPerSample / 8;
+        const int byteRate = sampleRate * blockAlign;
+
+        var sampleCount = checked(durationSeconds * sampleRate);
+        var dataLength = checked(sampleCount * blockAlign);
+
+        using var stream = File.Create(path);
+        using var writer = new BinaryWriter(stream);
+
+        writer.Write("RIFF"u8);
+        writer.Write(36 + dataLength);
+        writer.Write("WAVE"u8);
+        writer.Write("fmt "u8);
+        writer.Write(16);
+        writer.Write((short)1);
+        writer.Write(channelCount);
+        writer.Write(sampleRate);
+        writer.Write(byteRate);
+        writer.Write(blockAlign);
+        writer.Write(bitsPerSample);
+        writer.Write("data"u8);
+        writer.Write(dataLength);
+
+        for (var i = 0; i < sampleCount; i++)
+        {
+            writer.Write((short)0);
+        }
+    }
+
     private static void DeleteDirectory(string path)
     {
         if (Directory.Exists(path))
         {
             Directory.Delete(path, recursive: true);
+        }
+    }
+
+    private sealed class RecordingChunkDecoderFactory(RecordingChunkDecoder decoder) : ISherpaOnnxChunkDecoderFactory
+    {
+        public ISherpaOnnxChunkDecoder Create(string tokensPath, string onnxModelPath)
+        {
+            return decoder;
+        }
+    }
+
+    private sealed class RecordingChunkDecoder(params string[] texts) : ISherpaOnnxChunkDecoder
+    {
+        private int nextTextIndex;
+
+        public List<int> SampleCounts { get; } = [];
+
+        public string Decode(float[] samples)
+        {
+            SampleCounts.Add(samples.Length);
+            return texts[nextTextIndex++];
+        }
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class CollectingProgress : IProgress<int>
+    {
+        public List<int> Values { get; } = [];
+
+        public void Report(int value)
+        {
+            Values.Add(value);
+        }
+    }
+
+    private sealed class CallbackProgress(Action<int> callback) : IProgress<int>
+    {
+        public void Report(int value)
+        {
+            callback(value);
         }
     }
 }
