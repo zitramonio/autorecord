@@ -29,6 +29,11 @@ public partial class MainWindow : Window
     public event EventHandler? ValidateSelectedModelRequested;
     public event EventHandler? OpenModelsFolderRequested;
     public event EventHandler? PickFileForTranscriptionRequested;
+    public event EventHandler<TranscriptionJobActionRequestedEventArgs>? OpenTranscriptionJobTranscriptRequested;
+    public event EventHandler<TranscriptionJobActionRequestedEventArgs>? OpenTranscriptionJobFolderRequested;
+    public event EventHandler<TranscriptionJobActionRequestedEventArgs>? RetryTranscriptionJobRequested;
+    public event EventHandler<TranscriptionJobActionRequestedEventArgs>? CancelTranscriptionJobRequested;
+    public event EventHandler<TranscriptionJobActionRequestedEventArgs>? DeleteTranscriptionJobRequested;
 
     public bool AllowClose { get; set; }
     public string? SelectedModelId => SelectedAsrModelId;
@@ -98,15 +103,7 @@ public partial class MainWindow : Window
     {
         TranscriptionJobsGrid.ItemsSource = jobs
             .OrderByDescending(job => job.CreatedAt)
-            .Select(job => new
-            {
-                File = job.InputFilePath,
-                Model = job.AsrModelId,
-                Status = FormatJobStatus(job),
-                Progress = $"{job.ProgressPercent}%",
-                CreatedAt = job.CreatedAt.ToLocalTime().ToString("g"),
-                CompletedAt = job.FinishedAt?.ToLocalTime().ToString("g") ?? ""
-            })
+            .Select(TranscriptionJobListItemViewModel.FromJob)
             .ToArray();
     }
 
@@ -224,6 +221,31 @@ public partial class MainWindow : Window
     private void PickFileForTranscription_Click(object sender, RoutedEventArgs e)
     {
         PickFileForTranscriptionRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OpenTranscript_Click(object sender, RoutedEventArgs e)
+    {
+        RaiseJobAction(sender, OpenTranscriptionJobTranscriptRequested);
+    }
+
+    private void OpenTranscriptFolder_Click(object sender, RoutedEventArgs e)
+    {
+        RaiseJobAction(sender, OpenTranscriptionJobFolderRequested);
+    }
+
+    private void RetryTranscriptionJob_Click(object sender, RoutedEventArgs e)
+    {
+        RaiseJobAction(sender, RetryTranscriptionJobRequested);
+    }
+
+    private void CancelTranscriptionJob_Click(object sender, RoutedEventArgs e)
+    {
+        RaiseJobAction(sender, CancelTranscriptionJobRequested);
+    }
+
+    private void DeleteTranscriptionJob_Click(object sender, RoutedEventArgs e)
+    {
+        RaiseJobAction(sender, DeleteTranscriptionJobRequested);
     }
 
     private void AsrModelBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -449,16 +471,21 @@ public partial class MainWindow : Window
         ChooseTranscriptFolderButton.IsEnabled = customFolderSelected;
     }
 
-    private static string FormatJobStatus(TranscriptionJob job)
-    {
-        return job.Status == TranscriptionJobStatus.Failed && !string.IsNullOrWhiteSpace(job.ErrorMessage)
-            ? $"{job.Status}: {job.ErrorMessage}"
-            : job.Status.ToString();
-    }
-
     private sealed record SpeakerCountOption(string DisplayName, int? Value);
 
     private sealed record OutputFolderModeOption(string DisplayName, TranscriptOutputFolderMode Value);
+
+    private void RaiseJobAction(
+        object sender,
+        EventHandler<TranscriptionJobActionRequestedEventArgs>? handler)
+    {
+        if (sender is not FrameworkElement { DataContext: TranscriptionJobListItemViewModel job })
+        {
+            return;
+        }
+
+        handler?.Invoke(this, new TranscriptionJobActionRequestedEventArgs(job.Id));
+    }
 }
 
 public static class MainWindowTranscriptionSettings

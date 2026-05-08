@@ -199,6 +199,43 @@
                         <DataGridTextColumn Header="Прогресс" Binding="{Binding Progress}" />
                         <DataGridTextColumn Header="Создано" Binding="{Binding CreatedAt}" />
                         <DataGridTextColumn Header="Завершено" Binding="{Binding CompletedAt}" />
+                        <DataGridTemplateColumn Header="Действия">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <WrapPanel>
+                                        <Button Margin="0,0,4,0"
+                                                Padding="6,2"
+                                                IsEnabled="{Binding CanOpenTranscript}"
+                                                Click="OpenTranscript_Click">
+                                            Текст
+                                        </Button>
+                                        <Button Margin="0,0,4,0"
+                                                Padding="6,2"
+                                                IsEnabled="{Binding CanOpenFolder}"
+                                                Click="OpenTranscriptFolder_Click">
+                                            Папка
+                                        </Button>
+                                        <Button Margin="0,0,4,0"
+                                                Padding="6,2"
+                                                IsEnabled="{Binding CanRetry}"
+                                                Click="RetryTranscriptionJob_Click">
+                                            Повторить
+                                        </Button>
+                                        <Button Margin="0,0,4,0"
+                                                Padding="6,2"
+                                                IsEnabled="{Binding CanCancel}"
+                                                Click="CancelTranscriptionJob_Click">
+                                            Отменить
+                                        </Button>
+                                        <Button Padding="6,2"
+                                                IsEnabled="{Binding CanDelete}"
+                                                Click="DeleteTranscriptionJob_Click">
+                                            Удалить
+                                        </Button>
+                                    </WrapPanel>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
                     </DataGrid.Columns>
                 </DataGrid>
                 <Button x:Name="PickFileForTranscription"

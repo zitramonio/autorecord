@@ -79,6 +79,11 @@ public partial class App : System.Windows.Application
         _mainWindow.ValidateSelectedModelRequested += MainWindow_ValidateSelectedModelRequested;
         _mainWindow.OpenModelsFolderRequested += MainWindow_OpenModelsFolderRequested;
         _mainWindow.PickFileForTranscriptionRequested += MainWindow_PickFileForTranscriptionRequested;
+        _mainWindow.OpenTranscriptionJobTranscriptRequested += MainWindow_OpenTranscriptionJobTranscriptRequested;
+        _mainWindow.OpenTranscriptionJobFolderRequested += MainWindow_OpenTranscriptionJobFolderRequested;
+        _mainWindow.RetryTranscriptionJobRequested += MainWindow_RetryTranscriptionJobRequested;
+        _mainWindow.CancelTranscriptionJobRequested += MainWindow_CancelTranscriptionJobRequested;
+        _mainWindow.DeleteTranscriptionJobRequested += MainWindow_DeleteTranscriptionJobRequested;
 
         try
         {
@@ -175,6 +180,41 @@ public partial class App : System.Windows.Application
     private void MainWindow_PickFileForTranscriptionRequested(object? sender, EventArgs e)
     {
         _ = PickFileForTranscriptionAsync(_shutdown.Token);
+    }
+
+    private void MainWindow_OpenTranscriptionJobTranscriptRequested(
+        object? sender,
+        TranscriptionJobActionRequestedEventArgs e)
+    {
+        OpenTranscriptionJobTranscript(e.JobId);
+    }
+
+    private void MainWindow_OpenTranscriptionJobFolderRequested(
+        object? sender,
+        TranscriptionJobActionRequestedEventArgs e)
+    {
+        OpenTranscriptionJobFolder(e.JobId);
+    }
+
+    private void MainWindow_RetryTranscriptionJobRequested(
+        object? sender,
+        TranscriptionJobActionRequestedEventArgs e)
+    {
+        _ = RetryTranscriptionJobAsync(e.JobId, _shutdown.Token);
+    }
+
+    private void MainWindow_CancelTranscriptionJobRequested(
+        object? sender,
+        TranscriptionJobActionRequestedEventArgs e)
+    {
+        _ = CancelTranscriptionJobAsync(e.JobId, _shutdown.Token);
+    }
+
+    private void MainWindow_DeleteTranscriptionJobRequested(
+        object? sender,
+        TranscriptionJobActionRequestedEventArgs e)
+    {
+        _ = DeleteTranscriptionJobAsync(e.JobId, _shutdown.Token);
     }
 
     private async Task StartManualRecordingAsync(AppSettings settings, CancellationToken cancellationToken)
@@ -873,6 +913,136 @@ public partial class App : System.Windows.Application
         }
     }
 
+    private void OpenTranscriptionJobTranscript(Guid jobId)
+    {
+        var job = FindTranscriptionJob(jobId);
+        if (job is null)
+        {
+            SetStatus("Задача транскрибации не найдена.");
+            return;
+        }
+
+        var transcriptPath = job.OutputFiles.FirstOrDefault(File.Exists);
+        if (string.IsNullOrWhiteSpace(transcriptPath))
+        {
+            SetStatus("Файл транскрипта не найден.");
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(transcriptPath) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Не удалось открыть транскрипт: {ex.Message}");
+        }
+    }
+
+    private void OpenTranscriptionJobFolder(Guid jobId)
+    {
+        var job = FindTranscriptionJob(jobId);
+        if (job is null)
+        {
+            SetStatus("Задача транскрибации не найдена.");
+            return;
+        }
+
+        if (!Directory.Exists(job.OutputDirectory))
+        {
+            SetStatus("Папка транскриптов не найдена.");
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(job.OutputDirectory) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Не удалось открыть папку транскриптов: {ex.Message}");
+        }
+    }
+
+    private async Task RetryTranscriptionJobAsync(Guid jobId, CancellationToken cancellationToken)
+    {
+        if (_transcriptionQueue is null)
+        {
+            SetStatus("Очередь транскрибации не инициализирована.");
+            return;
+        }
+
+        try
+        {
+            var retried = await _transcriptionQueue.RetryAsync(jobId, cancellationToken);
+            RefreshTranscriptionJobs();
+            SetStatus(retried
+                ? "Задача повторно добавлена в очередь транскрибации."
+                : "Задачу нельзя повторить.");
+            if (retried)
+            {
+                _ = RunNextTranscriptionJobAsync(cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Не удалось повторить задачу: {ex.Message}");
+        }
+    }
+
+    private async Task CancelTranscriptionJobAsync(Guid jobId, CancellationToken cancellationToken)
+    {
+        if (_transcriptionQueue is null)
+        {
+            SetStatus("Очередь транскрибации не инициализирована.");
+            return;
+        }
+
+        try
+        {
+            var cancelled = await _transcriptionQueue.CancelAsync(jobId, cancellationToken);
+            RefreshTranscriptionJobs();
+            SetStatus(cancelled
+                ? "Задача транскрибации отменяется."
+                : "Задачу нельзя отменить.");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Не удалось отменить задачу: {ex.Message}");
+        }
+    }
+
+    private async Task DeleteTranscriptionJobAsync(Guid jobId, CancellationToken cancellationToken)
+    {
+        if (_transcriptionQueue is null)
+        {
+            SetStatus("Очередь транскрибации не инициализирована.");
+            return;
+        }
+
+        try
+        {
+            var deleted = await _transcriptionQueue.DeleteAsync(jobId, cancellationToken);
+            RefreshTranscriptionJobs();
+            SetStatus(deleted
+                ? "Задача удалена из истории."
+                : "Задачу нельзя удалить во время выполнения.");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Не удалось удалить задачу: {ex.Message}");
+        }
+    }
+
     private async Task PickFileForTranscriptionAsync(CancellationToken cancellationToken)
     {
         if (_mainWindow is null)
@@ -926,6 +1096,11 @@ public partial class App : System.Windows.Application
         {
             SetStatus($"Не удалось поставить файл в очередь: {ex.Message}");
         }
+    }
+
+    private TranscriptionJob? FindTranscriptionJob(Guid jobId)
+    {
+        return _transcriptionQueue?.Jobs.FirstOrDefault(job => job.Id == jobId);
     }
 
     private async Task EnqueueRecordingForTranscriptionAsync(

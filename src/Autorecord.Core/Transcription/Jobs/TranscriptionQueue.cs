@@ -10,7 +10,10 @@ public sealed class TranscriptionQueue
     private readonly object _jobsGate = new();
     private readonly SemaphoreSlim _repositoryGate = new(1, 1);
     private readonly SemaphoreSlim _workerGate = new(1, 1);
+    private readonly object _runningGate = new();
     private IReadOnlyList<TranscriptionJob> _jobs = [];
+    private Guid? _runningJobId;
+    private CancellationTokenSource? _runningJobCancellation;
 
     public TranscriptionQueue(
         TranscriptionJobRepository repository,
@@ -53,7 +56,6 @@ public sealed class TranscriptionQueue
         string? diarizationModelId,
         CancellationToken cancellationToken)
     {
-        IReadOnlyList<TranscriptionJob> jobs;
         var job = new TranscriptionJob
         {
             Id = Guid.NewGuid(),
@@ -69,10 +71,9 @@ public sealed class TranscriptionQueue
         lock (_jobsGate)
         {
             _jobs = _jobs.Append(job).ToArray();
-            jobs = _jobs;
         }
 
-        await SaveAsync(jobs, cancellationToken);
+        await SaveCurrentAsync(cancellationToken);
         OnJobsChanged();
         return job;
     }
@@ -82,58 +83,64 @@ public sealed class TranscriptionQueue
         await _workerGate.WaitAsync(cancellationToken);
         try
         {
-            if (!TryStartNextPendingJob(out var index, out var runningJob, out var jobs))
+            if (!TryStartNextPendingJob(out var runningJob))
             {
                 return;
             }
 
-            await SaveAsync(jobs, cancellationToken);
+            using var jobCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            SetRunningCancellation(runningJob.Id, jobCancellation);
+            await SaveCurrentAsync(cancellationToken);
             OnJobsChanged();
 
             var progress = new JobProgress(value =>
             {
-                UpdateJob(index, job => job with { ProgressPercent = Math.Clamp(value, 0, 100) });
+                UpdateJob(runningJob.Id, job => job with { ProgressPercent = Math.Clamp(value, 0, 100) });
                 OnJobsChanged();
             });
 
             TranscriptionPipelineResult result;
             try
             {
-                result = await _pipeline.RunAsync(runningJob, progress, cancellationToken);
+                result = await _pipeline.RunAsync(runningJob, progress, jobCancellation.Token);
             }
             catch (OperationCanceledException)
             {
-                jobs = UpdateJob(index, job => job with
+                UpdateJob(runningJob.Id, job => job with
                 {
                     Status = TranscriptionJobStatus.Cancelled,
                     FinishedAt = _clock(),
                     ErrorMessage = "Transcription job was cancelled."
                 });
-                await SaveAsync(jobs, CancellationToken.None);
+                await SaveCurrentAsync(CancellationToken.None);
                 OnJobsChanged();
                 return;
             }
             catch (Exception ex)
             {
-                jobs = UpdateJob(index, job => job with
+                UpdateJob(runningJob.Id, job => job with
                 {
                     Status = TranscriptionJobStatus.Failed,
                     FinishedAt = _clock(),
                     ErrorMessage = ex.Message
                 });
-                await SaveAsync(jobs, CancellationToken.None);
+                await SaveCurrentAsync(CancellationToken.None);
                 OnJobsChanged();
                 return;
             }
+            finally
+            {
+                ClearRunningCancellation(runningJob.Id);
+            }
 
-            jobs = UpdateJob(index, job => job with
+            UpdateJob(runningJob.Id, job => job with
             {
                 Status = TranscriptionJobStatus.Completed,
                 ProgressPercent = 100,
                 FinishedAt = _clock(),
                 OutputFiles = result.OutputFiles
             });
-            await SaveAsync(jobs, CancellationToken.None);
+            await SaveCurrentAsync(CancellationToken.None);
             OnJobsChanged();
         }
         finally
@@ -142,22 +149,112 @@ public sealed class TranscriptionQueue
         }
     }
 
-    private bool TryStartNextPendingJob(
-        out int index,
-        out TranscriptionJob runningJob,
-        out IReadOnlyList<TranscriptionJob> jobs)
+    public async Task<bool> RetryAsync(Guid jobId, CancellationToken cancellationToken)
     {
         lock (_jobsGate)
         {
-            index = -1;
+            var index = FindJobIndexUnderLock(jobId);
+            if (index < 0 || _jobs[index].Status == TranscriptionJobStatus.Running)
+            {
+                return false;
+            }
+
+            ReplaceJobUnderLock(index, _jobs[index] with
+            {
+                Status = TranscriptionJobStatus.Pending,
+                ProgressPercent = 0,
+                StartedAt = null,
+                FinishedAt = null,
+                ErrorMessage = null,
+                OutputFiles = []
+            });
+        }
+
+        await SaveCurrentAsync(cancellationToken);
+        OnJobsChanged();
+        return true;
+    }
+
+    public async Task<bool> CancelAsync(Guid jobId, CancellationToken cancellationToken)
+    {
+        CancellationTokenSource? runningCancellation = null;
+        var shouldSave = false;
+
+        lock (_jobsGate)
+        {
+            var index = FindJobIndexUnderLock(jobId);
+            if (index < 0)
+            {
+                return false;
+            }
+
+            var job = _jobs[index];
+            if (job.Status == TranscriptionJobStatus.Running)
+            {
+                lock (_runningGate)
+                {
+                    if (_runningJobId == jobId)
+                    {
+                        runningCancellation = _runningJobCancellation;
+                    }
+                }
+            }
+            else if (job.Status is TranscriptionJobStatus.Pending or TranscriptionJobStatus.WaitingForModel)
+            {
+                ReplaceJobUnderLock(index, job with
+                {
+                    Status = TranscriptionJobStatus.Cancelled,
+                    FinishedAt = _clock(),
+                    ErrorMessage = "Transcription job was cancelled."
+                });
+                shouldSave = true;
+            }
+        }
+
+        if (runningCancellation is not null)
+        {
+            await runningCancellation.CancelAsync();
+            return true;
+        }
+
+        if (!shouldSave)
+        {
+            return false;
+        }
+
+        await SaveCurrentAsync(cancellationToken);
+        OnJobsChanged();
+        return true;
+    }
+
+    public async Task<bool> DeleteAsync(Guid jobId, CancellationToken cancellationToken)
+    {
+        lock (_jobsGate)
+        {
+            var index = FindJobIndexUnderLock(jobId);
+            if (index < 0 || _jobs[index].Status == TranscriptionJobStatus.Running)
+            {
+                return false;
+            }
+
+            _jobs = _jobs.Where(job => job.Id != jobId).ToArray();
+        }
+
+        await SaveCurrentAsync(cancellationToken);
+        OnJobsChanged();
+        return true;
+    }
+
+    private bool TryStartNextPendingJob(out TranscriptionJob runningJob)
+    {
+        lock (_jobsGate)
+        {
             runningJob = new TranscriptionJob();
-            jobs = _jobs;
 
             for (var i = 0; i < _jobs.Count; i++)
             {
                 if (_jobs[i].Status == TranscriptionJobStatus.Pending)
                 {
-                    index = i;
                     runningJob = _jobs[i] with
                     {
                         Status = TranscriptionJobStatus.Running,
@@ -165,7 +262,7 @@ public sealed class TranscriptionQueue
                         ProgressPercent = 0,
                         ErrorMessage = null
                     };
-                    jobs = ReplaceJobUnderLock(index, runningJob);
+                    ReplaceJobUnderLock(i, runningJob);
                     return true;
                 }
             }
@@ -174,10 +271,16 @@ public sealed class TranscriptionQueue
         }
     }
 
-    private IReadOnlyList<TranscriptionJob> UpdateJob(int index, Func<TranscriptionJob, TranscriptionJob> update)
+    private IReadOnlyList<TranscriptionJob> UpdateJob(Guid jobId, Func<TranscriptionJob, TranscriptionJob> update)
     {
         lock (_jobsGate)
         {
+            var index = FindJobIndexUnderLock(jobId);
+            if (index < 0)
+            {
+                throw new InvalidOperationException("Transcription job no longer exists.");
+            }
+
             return ReplaceJobUnderLock(index, update(_jobs[index]));
         }
     }
@@ -190,11 +293,53 @@ public sealed class TranscriptionQueue
         return jobs;
     }
 
-    private async Task SaveAsync(IReadOnlyList<TranscriptionJob> jobs, CancellationToken cancellationToken)
+    private int FindJobIndexUnderLock(Guid jobId)
+    {
+        for (var i = 0; i < _jobs.Count; i++)
+        {
+            if (_jobs[i].Id == jobId)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private void SetRunningCancellation(Guid jobId, CancellationTokenSource cancellation)
+    {
+        lock (_runningGate)
+        {
+            _runningJobId = jobId;
+            _runningJobCancellation = cancellation;
+        }
+    }
+
+    private void ClearRunningCancellation(Guid jobId)
+    {
+        lock (_runningGate)
+        {
+            if (_runningJobId != jobId)
+            {
+                return;
+            }
+
+            _runningJobId = null;
+            _runningJobCancellation = null;
+        }
+    }
+
+    private async Task SaveCurrentAsync(CancellationToken cancellationToken)
     {
         await _repositoryGate.WaitAsync(cancellationToken);
         try
         {
+            IReadOnlyList<TranscriptionJob> jobs;
+            lock (_jobsGate)
+            {
+                jobs = _jobs;
+            }
+
             await _repository.SaveAsync(jobs, cancellationToken);
         }
         finally
