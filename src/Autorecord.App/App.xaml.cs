@@ -42,6 +42,7 @@ public partial class App : System.Windows.Application
     private ModelCatalog? _modelCatalog;
     private ModelManager? _modelManager;
     private ModelDownloadService? _modelDownloadService;
+    private ModelInstallService? _modelInstallService;
     private TranscriptionJobRepository? _transcriptionJobRepository;
     private TranscriptionQueue? _transcriptionQueue;
     private AppSettings _settings = new();
@@ -569,6 +570,7 @@ public partial class App : System.Windows.Application
         _modelCatalog = await ModelCatalog.LoadAsync(catalogPath, cancellationToken);
         _modelManager = new ModelManager(GetAppDataPath("Models"));
         _modelDownloadService = new ModelDownloadService(_httpClient, GetAppDataPath("Temp", "Downloads"));
+        _modelInstallService = new ModelInstallService(_modelManager);
         _transcriptionJobRepository = new TranscriptionJobRepository(GetAppDataPath("transcription-jobs.json"));
 
         var pipeline = new CurrentSettingsTranscriptionPipeline(
@@ -605,20 +607,41 @@ public partial class App : System.Windows.Application
 
     private async Task DownloadSelectedModelAsync(CancellationToken cancellationToken)
     {
-        if (!TryGetSelectedModel(out var model) || _modelDownloadService is null || _modelManager is null)
+        if (!TryGetSelectedModel(out var model)
+            || _modelCatalog is null
+            || _modelDownloadService is null
+            || _modelInstallService is null
+            || _modelManager is null)
         {
             return;
         }
 
+        var tempPaths = new List<string>();
         try
         {
             SetModelDownloadProgress(0);
-            SetStatus($"Скачивание модели: {model.DisplayName}");
             var progress = new Progress<ModelDownloadProgress>(value => SetModelDownloadProgress(value.Percent));
-            var tempPath = await _modelDownloadService.DownloadAsync(model, progress, cancellationToken);
-            var status = await _modelManager.GetStatusAsync(model, cancellationToken);
+            var installedModels = new List<string>();
+            await DownloadAndInstallModelAsync(model, progress, tempPaths, cancellationToken);
+            installedModels.Add(model.DisplayName);
+
+            if (_settings.Transcription.EnableDiarization
+                && !string.IsNullOrWhiteSpace(_settings.Transcription.SelectedDiarizationModelId))
+            {
+                var diarizationModel = _modelCatalog.GetRequired(_settings.Transcription.SelectedDiarizationModelId);
+                var diarizationStatus = await _modelManager.GetStatusAsync(diarizationModel, cancellationToken);
+                if (diarizationStatus != ModelInstallStatus.Installed)
+                {
+                    SetModelDownloadProgress(0);
+                    await DownloadAndInstallModelAsync(diarizationModel, progress, tempPaths, cancellationToken);
+                    installedModels.Add(diarizationModel.DisplayName);
+                }
+            }
+
             SetModelDownloadProgress(100);
-            SetStatus($"Модель скачана во временный файл: {tempPath}. Установка не выполнена. Статус: {status}.");
+            SetStatus(installedModels.Count == 1
+                ? $"Модель установлена и готова: {installedModels[0]}."
+                : $"Модели установлены и готовы: {string.Join(", ", installedModels)}.");
             await RefreshModelListAsync(cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -626,7 +649,146 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex)
         {
-            SetStatus($"Не удалось скачать модель: {ex.Message}");
+            SetStatus($"Не удалось скачать или установить модель: {ex.Message}");
+        }
+        finally
+        {
+            foreach (var tempPath in tempPaths)
+            {
+                DeleteTempFileQuietly(tempPath);
+            }
+        }
+    }
+
+    private async Task DownloadAndInstallModelAsync(
+        ModelCatalogEntry model,
+        IProgress<ModelDownloadProgress> progress,
+        List<string> tempPaths,
+        CancellationToken cancellationToken)
+    {
+        SetStatus($"Скачивание модели: {model.DisplayName}");
+        var artifacts = await DownloadModelArtifactsAsync(model, progress, tempPaths, cancellationToken);
+        SetStatus($"Установка модели: {model.DisplayName}");
+        await _modelInstallService!.InstallAsync(model, artifacts, cancellationToken);
+        var status = await _modelManager!.GetStatusAsync(model, cancellationToken);
+        if (status != ModelInstallStatus.Installed)
+        {
+            throw new InvalidOperationException($"Model validation returned status '{status}'.");
+        }
+    }
+
+    private async Task<IReadOnlyList<ModelInstallArtifact>> DownloadModelArtifactsAsync(
+        ModelCatalogEntry model,
+        IProgress<ModelDownloadProgress> progress,
+        List<string> tempPaths,
+        CancellationToken cancellationToken)
+    {
+        var artifacts = new List<ModelInstallArtifact>();
+
+        if (!string.IsNullOrWhiteSpace(model.Download.Url))
+        {
+            var tempPath = await _modelDownloadService!.DownloadAsync(model, progress, cancellationToken);
+            tempPaths.Add(tempPath);
+            artifacts.Add(new ModelInstallArtifact
+            {
+                Path = tempPath,
+                ArchiveType = model.Download.ArchiveType,
+                Sha256 = model.Download.Sha256
+            });
+            return artifacts;
+        }
+
+        if (!string.IsNullOrWhiteSpace(model.Download.SegmentationUrl))
+        {
+            SetStatus($"Скачивание segmentation-модели: {model.DisplayName}");
+            var url = model.Download.SegmentationUrl;
+            var tempPath = await _modelDownloadService!.DownloadFileAsync(
+                url,
+                $"{model.Id}-segmentation",
+                progress,
+                cancellationToken);
+            tempPaths.Add(tempPath);
+            artifacts.Add(new ModelInstallArtifact
+            {
+                Path = tempPath,
+                ArchiveType = InferArchiveType(model.Download.ArchiveType, url),
+                Sha256 = model.Download.Sha256
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(model.Download.EmbeddingUrl))
+        {
+            SetStatus($"Скачивание embedding-модели: {model.DisplayName}");
+            var url = model.Download.EmbeddingUrl;
+            var targetFileName = GetFileNameFromUrl(url, $"{model.Id}-embedding.onnx");
+            var tempPath = await _modelDownloadService!.DownloadFileAsync(
+                url,
+                targetFileName,
+                progress,
+                cancellationToken);
+            tempPaths.Add(tempPath);
+            artifacts.Add(new ModelInstallArtifact
+            {
+                Path = tempPath,
+                TargetFileName = targetFileName
+            });
+        }
+
+        if (artifacts.Count == 0)
+        {
+            throw new InvalidOperationException($"No download URL is available for model '{model.Id}'.");
+        }
+
+        return artifacts;
+    }
+
+    private static string? InferArchiveType(string? declaredArchiveType, string url)
+    {
+        if (!string.IsNullOrWhiteSpace(declaredArchiveType))
+        {
+            return declaredArchiveType;
+        }
+
+        var path = Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            ? uri.LocalPath
+            : url;
+
+        if (path.EndsWith(".tar.bz2", StringComparison.OrdinalIgnoreCase))
+        {
+            return "tar.bz2";
+        }
+
+        if (path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+        {
+            return "zip";
+        }
+
+        return null;
+    }
+
+    private static string GetFileNameFromUrl(string url, string fallback)
+    {
+        var path = Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            ? uri.LocalPath
+            : url;
+        var fileName = Path.GetFileName(path);
+        return string.IsNullOrWhiteSpace(fileName) ? fallback : fileName;
+    }
+
+    private static void DeleteTempFileQuietly(string tempPath)
+    {
+        try
+        {
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
         }
     }
 

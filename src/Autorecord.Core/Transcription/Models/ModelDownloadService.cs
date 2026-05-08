@@ -12,10 +12,24 @@ public sealed class ModelDownloadService(HttpClient httpClient, string downloads
         CancellationToken cancellationToken)
     {
         var url = SelectDownloadUrl(model);
+        return await DownloadFileAsync(url, model.Id, progress, cancellationToken);
+    }
+
+    public async Task<string> DownloadFileAsync(
+        string url,
+        string fileNameHint,
+        IProgress<ModelDownloadProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            throw new InvalidOperationException("No download URL is available.");
+        }
+
         var root = Path.GetFullPath(downloadsRoot);
         Directory.CreateDirectory(root);
 
-        var tempPath = CreateTempPath(root, model.Id);
+        var tempPath = CreateTempPath(root, fileNameHint);
 
         try
         {

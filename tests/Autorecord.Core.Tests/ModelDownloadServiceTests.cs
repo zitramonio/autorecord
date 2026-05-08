@@ -129,6 +129,34 @@ public sealed class ModelDownloadServiceTests
         Assert.False(File.Exists(outside));
     }
 
+    [Fact]
+    public async Task DownloadFileAsyncDownloadsExplicitUrlWithFileNameHint()
+    {
+        var root = CreateTempRoot();
+        var requestedUris = new List<Uri?>();
+        var service = CreateService(
+            root,
+            request =>
+            {
+                requestedUris.Add(request.RequestUri);
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent([9, 8, 7])
+                };
+            });
+
+        var path = await service.DownloadFileAsync(
+            "https://example.com/embedding.onnx",
+            "embedding.onnx",
+            null,
+            CancellationToken.None);
+
+        Assert.Equal(new Uri("https://example.com/embedding.onnx"), Assert.Single(requestedUris));
+        Assert.Equal([9, 8, 7], await File.ReadAllBytesAsync(path));
+        Assert.Contains($"{Path.DirectorySeparatorChar}embedding.onnx.", path);
+        Assert.StartsWith(Path.GetFullPath(root), Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase);
+    }
+
     private static ModelDownloadService CreateService(
         string root,
         Func<HttpRequestMessage, HttpResponseMessage> responseFactory)
