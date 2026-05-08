@@ -116,7 +116,7 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
         DeleteTemporaryNormalizedWavIfNeeded(normalized, job.InputFilePath);
         pipelineProgress.Report(100);
 
-        return new TranscriptionPipelineResult(outputFiles.AllPaths);
+        return new TranscriptionPipelineResult(outputFiles.AllPaths, document.DurationSec);
     }
 
     private static void EnsureModelType(ModelCatalogEntry model, string expectedType)

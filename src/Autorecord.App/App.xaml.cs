@@ -630,7 +630,12 @@ public partial class App : System.Windows.Application
         var pipeline = new CurrentSettingsTranscriptionPipeline(
             GetCurrentTranscriptionSettings,
             CreateTranscriptionPipeline);
-        _transcriptionQueue = new TranscriptionQueue(_transcriptionJobRepository, pipeline, () => DateTimeOffset.Now);
+        var jobLogWriter = new TranscriptionJobLogWriter(GetAppDataPath("Logs"));
+        _transcriptionQueue = new TranscriptionQueue(
+            _transcriptionJobRepository,
+            pipeline,
+            () => DateTimeOffset.Now,
+            jobLogWriter);
         _transcriptionQueue.JobsChanged += TranscriptionQueue_JobsChanged;
         await _transcriptionQueue.InitializeAsync(cancellationToken);
         await RefreshModelListAsync(cancellationToken);

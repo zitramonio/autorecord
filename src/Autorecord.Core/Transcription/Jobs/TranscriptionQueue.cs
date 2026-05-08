@@ -1,4 +1,5 @@
 using Autorecord.Core.Transcription.Pipeline;
+using NAudio.Wave;
 
 namespace Autorecord.Core.Transcription.Jobs;
 
@@ -7,6 +8,7 @@ public sealed class TranscriptionQueue
     private readonly TranscriptionJobRepository _repository;
     private readonly ITranscriptionPipeline _pipeline;
     private readonly Func<DateTimeOffset> _clock;
+    private readonly TranscriptionJobLogWriter? _logWriter;
     private readonly object _jobsGate = new();
     private readonly SemaphoreSlim _repositoryGate = new(1, 1);
     private readonly SemaphoreSlim _workerGate = new(1, 1);
@@ -18,11 +20,13 @@ public sealed class TranscriptionQueue
     public TranscriptionQueue(
         TranscriptionJobRepository repository,
         ITranscriptionPipeline pipeline,
-        Func<DateTimeOffset> clock)
+        Func<DateTimeOffset> clock,
+        TranscriptionJobLogWriter? logWriter = null)
     {
         _repository = repository;
         _pipeline = pipeline;
         _clock = clock;
+        _logWriter = logWriter;
     }
 
     public event EventHandler? JobsChanged;
@@ -91,6 +95,11 @@ public sealed class TranscriptionQueue
             using var jobCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             SetRunningCancellation(runningJob.Id, jobCancellation);
             await SaveCurrentAsync(cancellationToken);
+            if (_logWriter is not null)
+            {
+                await TryWriteJobLogAsync(token => _logWriter.WriteStartedAsync(runningJob, token));
+            }
+
             OnJobsChanged();
 
             var progress = new JobProgress(value =>
@@ -106,25 +115,57 @@ public sealed class TranscriptionQueue
             }
             catch (OperationCanceledException)
             {
-                UpdateJob(runningJob.Id, job => job with
+                TranscriptionJob cancelledJob = runningJob;
+                UpdateJob(runningJob.Id, job =>
                 {
-                    Status = TranscriptionJobStatus.Cancelled,
-                    FinishedAt = _clock(),
-                    ErrorMessage = "Transcription job was cancelled."
+                    cancelledJob = job with
+                    {
+                        Status = TranscriptionJobStatus.Cancelled,
+                        FinishedAt = _clock(),
+                        ErrorMessage = "Transcription job was cancelled."
+                    };
+
+                    return cancelledJob;
                 });
                 await SaveCurrentAsync(CancellationToken.None);
+                if (_logWriter is not null)
+                {
+                    await TryWriteJobLogAsync(token => _logWriter.WriteFinishedAsync(
+                        cancelledJob,
+                        null,
+                        CalculateProcessingTime(cancelledJob),
+                        token,
+                        TryReadInputDurationSec(cancelledJob.InputFilePath)));
+                }
+
                 OnJobsChanged();
                 return;
             }
             catch (Exception ex)
             {
-                UpdateJob(runningJob.Id, job => job with
+                TranscriptionJob failedJob = runningJob;
+                UpdateJob(runningJob.Id, job =>
                 {
-                    Status = TranscriptionJobStatus.Failed,
-                    FinishedAt = _clock(),
-                    ErrorMessage = ex.Message
+                    failedJob = job with
+                    {
+                        Status = TranscriptionJobStatus.Failed,
+                        FinishedAt = _clock(),
+                        ErrorMessage = ex.Message
+                    };
+
+                    return failedJob;
                 });
                 await SaveCurrentAsync(CancellationToken.None);
+                if (_logWriter is not null)
+                {
+                    await TryWriteJobLogAsync(token => _logWriter.WriteFinishedAsync(
+                        failedJob,
+                        null,
+                        CalculateProcessingTime(failedJob),
+                        token,
+                        TryReadInputDurationSec(failedJob.InputFilePath)));
+                }
+
                 OnJobsChanged();
                 return;
             }
@@ -133,14 +174,29 @@ public sealed class TranscriptionQueue
                 ClearRunningCancellation(runningJob.Id);
             }
 
-            UpdateJob(runningJob.Id, job => job with
+            TranscriptionJob completedJob = runningJob;
+            UpdateJob(runningJob.Id, job =>
             {
-                Status = TranscriptionJobStatus.Completed,
-                ProgressPercent = 100,
-                FinishedAt = _clock(),
-                OutputFiles = result.OutputFiles
+                completedJob = job with
+                {
+                    Status = TranscriptionJobStatus.Completed,
+                    ProgressPercent = 100,
+                    FinishedAt = _clock(),
+                    OutputFiles = result.OutputFiles
+                };
+
+                return completedJob;
             });
             await SaveCurrentAsync(CancellationToken.None);
+            if (_logWriter is not null)
+            {
+                await TryWriteJobLogAsync(token => _logWriter.WriteFinishedAsync(
+                    completedJob,
+                    result,
+                    CalculateProcessingTime(completedJob),
+                    token));
+            }
+
             OnJobsChanged();
         }
         finally
@@ -345,6 +401,47 @@ public sealed class TranscriptionQueue
         finally
         {
             _repositoryGate.Release();
+        }
+    }
+
+    private static TimeSpan CalculateProcessingTime(TranscriptionJob job)
+    {
+        if (job.StartedAt is null || job.FinishedAt is null)
+        {
+            return TimeSpan.Zero;
+        }
+
+        var processingTime = job.FinishedAt.Value - job.StartedAt.Value;
+        return processingTime < TimeSpan.Zero ? TimeSpan.Zero : processingTime;
+    }
+
+    private static async Task TryWriteJobLogAsync(Func<CancellationToken, Task> write)
+    {
+        try
+        {
+            await write(CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OperationCanceledException)
+        {
+        }
+    }
+
+    private static double? TryReadInputDurationSec(string inputFilePath)
+    {
+        try
+        {
+            if (!File.Exists(inputFilePath) ||
+                !string.Equals(Path.GetExtension(inputFilePath), ".wav", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            using var reader = new WaveFileReader(inputFilePath);
+            return reader.TotalTime.TotalSeconds;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or FormatException)
+        {
+            return null;
         }
     }
 

@@ -1,5 +1,6 @@
 using Autorecord.Core.Transcription.Jobs;
 using Autorecord.Core.Transcription.Pipeline;
+using NAudio.Wave;
 
 namespace Autorecord.Core.Tests;
 
@@ -252,6 +253,107 @@ public sealed class TranscriptionQueueTests
     }
 
     [Fact]
+    public async Task RunNextAsyncWritesCompletedJobLog()
+    {
+        var repository = new TranscriptionJobRepository(CreateTempPath());
+        var logWriter = new TranscriptionJobLogWriter(CreateTempRoot());
+        var pipeline = new FakePipeline(
+            (_, _, _) => Task.FromResult(new TranscriptionPipelineResult(
+                ["C:\\Transcripts\\meeting.txt", "C:\\Transcripts\\meeting.json"],
+                12.34)));
+        var queue = new TranscriptionQueue(repository, pipeline, FixedClock, logWriter);
+        var job = await queue.EnqueueAsync(
+            "C:\\Records\\meeting.wav",
+            "C:\\Transcripts",
+            "asr-fast",
+            "diarization-fast",
+            CancellationToken.None);
+
+        await queue.RunNextAsync(CancellationToken.None);
+
+        var log = await File.ReadAllTextAsync(logWriter.GetLogPath(job.Id));
+        Assert.Contains($"JobId: {job.Id}", log);
+        Assert.Contains("InputFilePath: C:\\Records\\meeting.wav", log);
+        Assert.Contains("AsrModelId: asr-fast", log);
+        Assert.Contains("DiarizationModelId: diarization-fast", log);
+        Assert.Contains("Status: Completed", log);
+        Assert.Contains("DurationSec: 12.34", log);
+        Assert.Contains("OutputFile: C:\\Transcripts\\meeting.txt", log);
+        Assert.DoesNotContain("Hello from fake ASR", log);
+    }
+
+    [Fact]
+    public async Task RunNextAsyncWritesFailedJobLog()
+    {
+        var root = CreateTempRoot();
+        var inputPath = Path.Combine(root, "meeting.wav");
+        CreateSilentWav(inputPath);
+        var repository = new TranscriptionJobRepository(CreateTempPath());
+        var logWriter = new TranscriptionJobLogWriter(CreateTempRoot());
+        var pipeline = new FakePipeline((_, _, _) => throw new InvalidOperationException("pipeline failed"));
+        var queue = new TranscriptionQueue(repository, pipeline, FixedClock, logWriter);
+        var job = await queue.EnqueueAsync(
+            inputPath,
+            "C:\\Transcripts",
+            "asr-fast",
+            "diarization-fast",
+            CancellationToken.None);
+
+        await queue.RunNextAsync(CancellationToken.None);
+
+        var log = await File.ReadAllTextAsync(logWriter.GetLogPath(job.Id));
+        Assert.Contains("Status: Failed", log);
+        Assert.Contains("Error: pipeline failed", log);
+        Assert.Contains("DurationSec: 0.1", log);
+    }
+
+    [Fact]
+    public async Task RunNextAsyncStillCompletesWhenJobLogCannotBeWritten()
+    {
+        var repository = new TranscriptionJobRepository(CreateTempPath());
+        var logRoot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "logs");
+        Directory.CreateDirectory(Path.GetDirectoryName(logRoot)!);
+        File.WriteAllText(logRoot, "");
+        var logWriter = new TranscriptionJobLogWriter(logRoot);
+        var queue = new TranscriptionQueue(repository, new FakePipeline(Succeed), FixedClock, logWriter);
+        await queue.EnqueueAsync(
+            "C:\\Records\\meeting.wav",
+            "C:\\Transcripts",
+            "asr-fast",
+            null,
+            CancellationToken.None);
+
+        await queue.RunNextAsync(CancellationToken.None);
+
+        var persistedJob = Assert.Single(await repository.LoadAsync(CancellationToken.None));
+        Assert.Equal(TranscriptionJobStatus.Completed, persistedJob.Status);
+    }
+
+    [Fact]
+    public async Task RunNextAsyncStillFailsCleanlyWhenInputWavDurationCannotBeRead()
+    {
+        var root = CreateTempRoot();
+        var inputPath = Path.Combine(root, "broken.wav");
+        await File.WriteAllTextAsync(inputPath, "not a wav");
+        var repository = new TranscriptionJobRepository(CreateTempPath());
+        var logWriter = new TranscriptionJobLogWriter(CreateTempRoot());
+        var pipeline = new FakePipeline((_, _, _) => throw new InvalidOperationException("pipeline failed"));
+        var queue = new TranscriptionQueue(repository, pipeline, FixedClock, logWriter);
+        await queue.EnqueueAsync(
+            inputPath,
+            "C:\\Transcripts",
+            "asr-fast",
+            null,
+            CancellationToken.None);
+
+        await queue.RunNextAsync(CancellationToken.None);
+
+        var persistedJob = Assert.Single(await repository.LoadAsync(CancellationToken.None));
+        Assert.Equal(TranscriptionJobStatus.Failed, persistedJob.Status);
+        Assert.Equal("pipeline failed", persistedJob.ErrorMessage);
+    }
+
+    [Fact]
     public async Task EnqueueAsyncPersistsSeparateOutputDirectory()
     {
         var repository = new TranscriptionJobRepository(CreateTempPath());
@@ -421,6 +523,20 @@ public sealed class TranscriptionQueueTests
     private static string CreateTempPath()
     {
         return Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "jobs.json");
+    }
+
+    private static string CreateTempRoot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        return root;
+    }
+
+    private static void CreateSilentWav(string path)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path) ?? ".");
+        using var writer = new WaveFileWriter(path, new WaveFormat(16_000, 16, 1));
+        writer.Write(new byte[3_200], 0, 3_200);
     }
 
     private static TranscriptionJob CreateJob()

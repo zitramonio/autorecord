@@ -49,6 +49,7 @@ public sealed class TranscriptionPipelineTests
                     Path.Combine(outputDirectory, "meeting.json")
                 ],
                 result.OutputFiles);
+            Assert.Equal(1.2, result.DurationSec);
             Assert.All(result.OutputFiles, path => Assert.True(File.Exists(path), path));
             Assert.Equal(1, asr.CallCount);
             Assert.Equal(1, diarization.CallCount);
