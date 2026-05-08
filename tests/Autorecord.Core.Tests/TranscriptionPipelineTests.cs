@@ -140,6 +140,50 @@ public sealed class TranscriptionPipelineTests
         }
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData(" ")]
+    public async Task RunAsyncThrowsWhenDiarizationEnabledWithoutModelIdBeforeNormalizationOrEnginesRun(string? diarizationModelId)
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var inputPath = Path.Combine(root, "meeting.wav");
+            var normalizedRoot = Path.Combine(root, "normalized");
+            CreateSilentWav(inputPath, new WaveFormat(48_000, 16, 2));
+            var catalog = await CreateCatalogAsync(root);
+            InstallModel(root, "asr-fast");
+            var asr = new FakeTranscriptionEngine();
+            var diarization = new FakeDiarizationEngine();
+            var pipeline = CreatePipeline(
+                root,
+                catalog,
+                new Dictionary<string, ITranscriptionEngine> { ["fake-asr"] = asr },
+                diarization,
+                new TranscriptionSettings
+                {
+                    EnableDiarization = true,
+                    OutputFormats = [TranscriptOutputFormat.Txt],
+                    KeepIntermediateFiles = false
+                });
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => pipeline.RunAsync(
+                    CreateJob(inputPath, Path.Combine(root, "out"), "asr-fast", diarizationModelId),
+                    new Progress<int>(),
+                    CancellationToken.None));
+
+            Assert.Contains("DiarizationModelId", exception.Message);
+            Assert.Equal(0, asr.CallCount);
+            Assert.Equal(0, diarization.CallCount);
+            Assert.False(Directory.Exists(normalizedRoot));
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
     [Fact]
     public async Task RunAsyncMapsEngineProgressToMonotonicPipelineProgress()
     {

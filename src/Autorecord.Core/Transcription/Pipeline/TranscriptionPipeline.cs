@@ -48,8 +48,13 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
         await EnsureInstalledAsync(asrModel, cancellationToken);
         ModelCatalogEntry? diarizationModel = null;
         var diarizationModelId = job.DiarizationModelId;
-        if (_settings.EnableDiarization && !string.IsNullOrWhiteSpace(diarizationModelId))
+        if (_settings.EnableDiarization)
         {
+            if (string.IsNullOrWhiteSpace(diarizationModelId))
+            {
+                throw new InvalidOperationException("DiarizationModelId is required when diarization is enabled.");
+            }
+
             diarizationModel = _catalog.GetRequired(diarizationModelId);
             await EnsureInstalledAsync(diarizationModel, cancellationToken);
         }
