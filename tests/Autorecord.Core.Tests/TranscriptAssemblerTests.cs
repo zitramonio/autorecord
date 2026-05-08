@@ -64,6 +64,25 @@ public sealed class TranscriptAssemblerTests
     }
 
     [Fact]
+    public void AssembleUsesFirstSpeakerLabelForFallbackWhenSpeakerZeroAppearsSecond()
+    {
+        var asr = new[]
+        {
+            new TranscriptionEngineSegment(10.0, 12.0, "Без спикера.", null)
+        };
+        var turns = new[]
+        {
+            new DiarizationTurn(0.0, 2.0, "SPEAKER_01"),
+            new DiarizationTurn(2.0, 4.0, "SPEAKER_00")
+        };
+
+        var segments = TranscriptAssembler.Assemble(asr, turns);
+
+        Assert.Equal("SPEAKER_00", segments[0].SpeakerId);
+        Assert.Equal("Speaker 1", segments[0].SpeakerLabel);
+    }
+
+    [Fact]
     public void AssembleMergesAdjacentSegmentsForSameSpeaker()
     {
         var asr = new[]

@@ -18,8 +18,13 @@ public static class TranscriptAssembler
         var result = new List<TranscriptSegment>();
         foreach (var segment in asrSegments.OrderBy(segment => segment.Start))
         {
-            var speakerId = FindBestSpeaker(segment, turns) ?? "SPEAKER_00";
-            if (!speakerLabels.TryGetValue(speakerId, out var label))
+            var speakerId = FindBestSpeaker(segment, turns);
+            var label = "Speaker 1";
+            if (speakerId is null)
+            {
+                speakerId = "SPEAKER_00";
+            }
+            else if (!speakerLabels.TryGetValue(speakerId, out label))
             {
                 label = "Speaker 1";
             }
