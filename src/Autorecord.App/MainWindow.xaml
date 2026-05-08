@@ -160,6 +160,9 @@
                                  Margin="0,6,0,0"
                                  Minimum="0"
                                  Maximum="100" />
+                    <TextBlock x:Name="ModelDownloadDetailsText"
+                               Margin="0,4,0,0"
+                               Text="Скачивание не запущено" />
                 </StackPanel>
                 <WrapPanel Grid.Row="1" Margin="0,12,0,12">
                     <Button x:Name="DownloadModelButton"
@@ -173,6 +176,13 @@
                             Margin="0,0,8,8"
                             Click="DeleteModel_Click">
                         Удалить
+                    </Button>
+                    <Button x:Name="CancelDownloadModelButton"
+                            Width="120"
+                            Margin="0,0,8,8"
+                            IsEnabled="False"
+                            Click="CancelDownloadModel_Click">
+                        Отменить
                     </Button>
                     <Button x:Name="ValidateModelButton"
                             Width="120"

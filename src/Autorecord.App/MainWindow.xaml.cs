@@ -3,6 +3,7 @@ using System.Windows;
 using Autorecord.App.Transcription;
 using Autorecord.Core.Settings;
 using Autorecord.Core.Transcription.Jobs;
+using Autorecord.Core.Transcription.Models;
 using Forms = System.Windows.Forms;
 
 namespace Autorecord.App;
@@ -25,6 +26,7 @@ public partial class MainWindow : Window
     public event EventHandler<AppSettings>? ManualRecordingStartRequested;
     public event EventHandler? ManualRecordingStopRequested;
     public event EventHandler? DownloadSelectedModelRequested;
+    public event EventHandler? CancelModelDownloadRequested;
     public event EventHandler? DeleteSelectedModelRequested;
     public event EventHandler? ValidateSelectedModelRequested;
     public event EventHandler? OpenModelsFolderRequested;
@@ -97,6 +99,25 @@ public partial class MainWindow : Window
     public void SetModelDownloadProgress(int percent)
     {
         ModelDownloadProgress.Value = Math.Clamp(percent, 0, 100);
+    }
+
+    public void SetModelDownloadProgress(ModelDownloadProgress progress)
+    {
+        ModelDownloadProgress.Value = progress.Percent;
+        ModelDownloadDetailsText.Text = ModelDownloadProgressText.Format(progress);
+    }
+
+    public void SetModelDownloadStatus(string status)
+    {
+        ModelDownloadDetailsText.Text = status;
+    }
+
+    public void SetModelDownloadBusy(bool isDownloading)
+    {
+        DownloadModelButton.IsEnabled = !isDownloading;
+        CancelDownloadModelButton.IsEnabled = isDownloading;
+        DeleteModelButton.IsEnabled = !isDownloading;
+        ValidateModelButton.IsEnabled = !isDownloading;
     }
 
     public void SetTranscriptionJobs(IReadOnlyList<TranscriptionJob> jobs)
@@ -201,6 +222,11 @@ public partial class MainWindow : Window
     private void DownloadModel_Click(object sender, RoutedEventArgs e)
     {
         DownloadSelectedModelRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void CancelDownloadModel_Click(object sender, RoutedEventArgs e)
+    {
+        CancelModelDownloadRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private void DeleteModel_Click(object sender, RoutedEventArgs e)

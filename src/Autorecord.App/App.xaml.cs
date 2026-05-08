@@ -43,6 +43,7 @@ public partial class App : System.Windows.Application
     private ModelManager? _modelManager;
     private ModelDownloadService? _modelDownloadService;
     private ModelInstallService? _modelInstallService;
+    private CancellationTokenSource? _modelDownloadCancellation;
     private TranscriptionJobRepository? _transcriptionJobRepository;
     private TranscriptionQueue? _transcriptionQueue;
     private AppSettings _settings = new();
@@ -75,6 +76,7 @@ public partial class App : System.Windows.Application
         _mainWindow.ManualRecordingStartRequested += MainWindow_ManualRecordingStartRequested;
         _mainWindow.ManualRecordingStopRequested += MainWindow_ManualRecordingStopRequested;
         _mainWindow.DownloadSelectedModelRequested += MainWindow_DownloadSelectedModelRequested;
+        _mainWindow.CancelModelDownloadRequested += MainWindow_CancelModelDownloadRequested;
         _mainWindow.DeleteSelectedModelRequested += MainWindow_DeleteSelectedModelRequested;
         _mainWindow.ValidateSelectedModelRequested += MainWindow_ValidateSelectedModelRequested;
         _mainWindow.OpenModelsFolderRequested += MainWindow_OpenModelsFolderRequested;
@@ -160,6 +162,18 @@ public partial class App : System.Windows.Application
     private void MainWindow_DownloadSelectedModelRequested(object? sender, EventArgs e)
     {
         _ = DownloadSelectedModelAsync(_shutdown.Token);
+    }
+
+    private void MainWindow_CancelModelDownloadRequested(object? sender, EventArgs e)
+    {
+        if (_modelDownloadCancellation is null)
+        {
+            return;
+        }
+
+        _modelDownloadCancellation.Cancel();
+        SetStatus("Отмена скачивания модели...");
+        SetModelDownloadStatus("Отмена скачивания...");
     }
 
     private void MainWindow_DeleteSelectedModelRequested(object? sender, EventArgs e)
@@ -657,6 +671,12 @@ public partial class App : System.Windows.Application
 
     private async Task DownloadSelectedModelAsync(CancellationToken cancellationToken)
     {
+        if (_modelDownloadCancellation is not null)
+        {
+            SetStatus("Скачивание модели уже выполняется.");
+            return;
+        }
+
         if (_mainWindow is null
             || !_mainWindow.TryGetCurrentSettings(out var currentSettings)
             || !TryGetModelById(currentSettings.Transcription.SelectedAsrModelId, out var model)
@@ -671,35 +691,41 @@ public partial class App : System.Windows.Application
         SetCurrentSettings(currentSettings);
         var transcriptionSettings = currentSettings.Transcription;
         var tempPaths = new List<string>();
+        using var downloadCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _modelDownloadCancellation = downloadCancellation;
         try
         {
-            SetModelDownloadProgress(0);
-            var progress = new Progress<ModelDownloadProgress>(value => SetModelDownloadProgress(value.Percent));
+            SetModelDownloadBusy(true);
+            SetModelDownloadProgress(new ModelDownloadProgress());
+            var progress = new Progress<ModelDownloadProgress>(SetModelDownloadProgress);
             var installedModels = new List<string>();
-            await DownloadAndInstallModelAsync(model, progress, tempPaths, cancellationToken);
+            await DownloadAndInstallModelAsync(model, progress, tempPaths, downloadCancellation.Token);
             installedModels.Add(model.DisplayName);
 
             if (transcriptionSettings.EnableDiarization
                 && !string.IsNullOrWhiteSpace(transcriptionSettings.SelectedDiarizationModelId))
             {
                 var diarizationModel = _modelCatalog.GetRequired(transcriptionSettings.SelectedDiarizationModelId);
-                var diarizationStatus = await _modelManager.GetStatusAsync(diarizationModel, cancellationToken);
+                var diarizationStatus = await _modelManager.GetStatusAsync(diarizationModel, downloadCancellation.Token);
                 if (diarizationStatus != ModelInstallStatus.Installed)
                 {
-                    SetModelDownloadProgress(0);
-                    await DownloadAndInstallModelAsync(diarizationModel, progress, tempPaths, cancellationToken);
+                    SetModelDownloadProgress(new ModelDownloadProgress());
+                    await DownloadAndInstallModelAsync(diarizationModel, progress, tempPaths, downloadCancellation.Token);
                     installedModels.Add(diarizationModel.DisplayName);
                 }
             }
 
             SetModelDownloadProgress(100);
+            SetModelDownloadStatus("Скачивание завершено.");
             SetStatus(installedModels.Count == 1
                 ? $"Модель установлена и готова: {installedModels[0]}."
                 : $"Модели установлены и готовы: {string.Join(", ", installedModels)}.");
-            await RefreshModelListAsync(cancellationToken);
+            await RefreshModelListAsync(downloadCancellation.Token);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (downloadCancellation.IsCancellationRequested)
         {
+            SetStatus("Скачивание модели отменено.");
+            SetModelDownloadStatus("Скачивание отменено.");
         }
         catch (Exception ex)
         {
@@ -707,6 +733,13 @@ public partial class App : System.Windows.Application
         }
         finally
         {
+            if (ReferenceEquals(_modelDownloadCancellation, downloadCancellation))
+            {
+                _modelDownloadCancellation = null;
+            }
+
+            SetModelDownloadBusy(false);
+
             foreach (var tempPath in tempPaths)
             {
                 DeleteTempFileQuietly(tempPath);
@@ -1282,6 +1315,36 @@ public partial class App : System.Windows.Application
         }
 
         Dispatcher.BeginInvoke(() => _mainWindow.SetModelDownloadProgress(percent));
+    }
+
+    private void SetModelDownloadProgress(ModelDownloadProgress progress)
+    {
+        if (_mainWindow is null)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(() => _mainWindow.SetModelDownloadProgress(progress));
+    }
+
+    private void SetModelDownloadStatus(string status)
+    {
+        if (_mainWindow is null)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(() => _mainWindow.SetModelDownloadStatus(status));
+    }
+
+    private void SetModelDownloadBusy(bool isDownloading)
+    {
+        if (_mainWindow is null)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(() => _mainWindow.SetModelDownloadBusy(isDownloading));
     }
 
     private static string ResolveModelCatalogPath()
