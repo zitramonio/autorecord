@@ -98,6 +98,91 @@ public sealed class TranscriptionPipelineTests
     }
 
     [Fact]
+    public async Task RunAsyncThrowsWhenDiarizationModelMissingBeforeNormalizationOrEnginesRun()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var inputPath = Path.Combine(root, "meeting.wav");
+            var normalizedRoot = Path.Combine(root, "normalized");
+            CreateSilentWav(inputPath, new WaveFormat(48_000, 16, 2));
+            var catalog = await CreateCatalogAsync(root);
+            InstallModel(root, "asr-fast");
+            var asr = new FakeTranscriptionEngine();
+            var diarization = new FakeDiarizationEngine();
+            var pipeline = CreatePipeline(
+                root,
+                catalog,
+                new Dictionary<string, ITranscriptionEngine> { ["fake-asr"] = asr },
+                diarization,
+                new TranscriptionSettings
+                {
+                    EnableDiarization = true,
+                    OutputFormats = [TranscriptOutputFormat.Txt],
+                    KeepIntermediateFiles = false
+                });
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => pipeline.RunAsync(
+                    CreateJob(inputPath, Path.Combine(root, "out"), "asr-fast", "diarization-fast"),
+                    new Progress<int>(),
+                    CancellationToken.None));
+
+            Assert.Contains("ModelNotInstalled", exception.Message);
+            Assert.Contains("diarization-fast", exception.Message);
+            Assert.Equal(0, asr.CallCount);
+            Assert.Equal(0, diarization.CallCount);
+            Assert.False(Directory.Exists(normalizedRoot));
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsyncMapsEngineProgressToMonotonicPipelineProgress()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var inputPath = Path.Combine(root, "meeting.wav");
+            CreateSilentWav(inputPath, new WaveFormat(16_000, 16, 1));
+            var catalog = await CreateCatalogAsync(root);
+            InstallModel(root, "asr-fast");
+            InstallModel(root, "diarization-fast");
+            var progress = new CollectingProgress();
+            var pipeline = CreatePipeline(
+                root,
+                catalog,
+                new Dictionary<string, ITranscriptionEngine>
+                {
+                    ["fake-asr"] = new FakeTranscriptionEngine { ReportProgressEdges = true }
+                },
+                new FakeDiarizationEngine { ReportProgressEdges = true },
+                new TranscriptionSettings
+                {
+                    EnableDiarization = true,
+                    OutputFormats = [TranscriptOutputFormat.Txt],
+                    OverwriteExistingTranscripts = true
+                });
+
+            await pipeline.RunAsync(
+                CreateJob(inputPath, Path.Combine(root, "out"), "asr-fast", "diarization-fast"),
+                progress,
+                CancellationToken.None);
+
+            Assert.NotEmpty(progress.Values);
+            Assert.Equal(100, progress.Values[^1]);
+            Assert.All(progress.Values.Zip(progress.Values.Skip(1)), pair => Assert.True(pair.First <= pair.Second));
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public async Task RunAsyncDeletesTemporaryNormalizedWavAfterSuccessWhenConfigured()
     {
         var root = CreateTempRoot();
@@ -353,6 +438,7 @@ public sealed class TranscriptionPipelineTests
         public int CallCount { get; private set; }
         public string? LastNormalizedWavPath { get; private set; }
         public Exception? Exception { get; init; }
+        public bool ReportProgressEdges { get; init; }
 
         public Task<TranscriptionEngineResult> TranscribeAsync(
             string normalizedWavPath,
@@ -367,6 +453,12 @@ public sealed class TranscriptionPipelineTests
                 throw Exception;
             }
 
+            if (ReportProgressEdges)
+            {
+                progress.Report(0);
+                progress.Report(100);
+            }
+
             return Task.FromResult(new TranscriptionEngineResult(
                 [new TranscriptionEngineSegment(0.1, 1.2, "Hello from fake ASR.", 0.95)]));
         }
@@ -375,6 +467,7 @@ public sealed class TranscriptionPipelineTests
     private sealed class FakeDiarizationEngine : IDiarizationEngine
     {
         public int CallCount { get; private set; }
+        public bool ReportProgressEdges { get; init; }
 
         public Task<IReadOnlyList<DiarizationTurn>> DiarizeAsync(
             string normalizedWavPath,
@@ -385,7 +478,23 @@ public sealed class TranscriptionPipelineTests
             CancellationToken cancellationToken)
         {
             CallCount++;
+            if (ReportProgressEdges)
+            {
+                progress.Report(0);
+                progress.Report(100);
+            }
+
             return Task.FromResult<IReadOnlyList<DiarizationTurn>>([new DiarizationTurn(0.0, 1.5, "SPEAKER_00")]);
+        }
+    }
+
+    private sealed class CollectingProgress : IProgress<int>
+    {
+        public List<int> Values { get; } = [];
+
+        public void Report(int value)
+        {
+            Values.Add(value);
         }
     }
 }

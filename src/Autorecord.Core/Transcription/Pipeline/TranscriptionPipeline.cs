@@ -41,10 +41,18 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        progress.Report(0);
+        var pipelineProgress = new PipelineProgress(progress);
+        pipelineProgress.Report(0);
 
         var asrModel = _catalog.GetRequired(job.AsrModelId);
         await EnsureInstalledAsync(asrModel, cancellationToken);
+        ModelCatalogEntry? diarizationModel = null;
+        var diarizationModelId = job.DiarizationModelId;
+        if (_settings.EnableDiarization && !string.IsNullOrWhiteSpace(diarizationModelId))
+        {
+            diarizationModel = _catalog.GetRequired(diarizationModelId);
+            await EnsureInstalledAsync(diarizationModel, cancellationToken);
+        }
 
         if (!_asrEngines.TryGetValue(asrModel.Engine, out var asrEngine))
         {
@@ -55,27 +63,24 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
             job.InputFilePath,
             _settings.KeepIntermediateFiles,
             cancellationToken);
+        pipelineProgress.Report(10);
 
         IReadOnlyList<DiarizationTurn> diarizationTurns = [];
-        ModelCatalogEntry? diarizationModel = null;
-        if (_settings.EnableDiarization && !string.IsNullOrWhiteSpace(job.DiarizationModelId))
+        if (diarizationModel is not null)
         {
-            diarizationModel = _catalog.GetRequired(job.DiarizationModelId);
-            await EnsureInstalledAsync(diarizationModel, cancellationToken);
-
             diarizationTurns = await _diarizationEngine.DiarizeAsync(
                 normalized.NormalizedWavPath,
                 _modelManager.GetModelPath(diarizationModel),
                 _settings.NumSpeakers,
                 _settings.ClusterThreshold,
-                progress,
+                pipelineProgress.CreateStage(10, 45),
                 cancellationToken);
         }
 
         var asrResult = await asrEngine.TranscribeAsync(
             normalized.NormalizedWavPath,
             _modelManager.GetModelPath(asrModel),
-            progress,
+            pipelineProgress.CreateStage(diarizationModel is null ? 10 : 45, 95),
             cancellationToken);
 
         var segments = TranscriptAssembler.Assemble(asrResult.Segments, diarizationTurns);
@@ -101,7 +106,7 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
             cancellationToken);
 
         DeleteTemporaryNormalizedWavIfNeeded(normalized, job.InputFilePath);
-        progress.Report(100);
+        pipelineProgress.Report(100);
 
         return new TranscriptionPipelineResult(outputFiles.AllPaths);
     }
@@ -147,5 +152,54 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
     private static bool SamePath(string left, string right)
     {
         return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class PipelineProgress
+    {
+        private readonly IProgress<int> _inner;
+        private int _last;
+
+        public PipelineProgress(IProgress<int> inner)
+        {
+            _inner = inner;
+        }
+
+        public void Report(int value)
+        {
+            var clamped = Math.Clamp(value, 0, 100);
+            if (clamped < _last)
+            {
+                return;
+            }
+
+            _last = clamped;
+            _inner.Report(clamped);
+        }
+
+        public IProgress<int> CreateStage(int start, int end)
+        {
+            return new StageProgress(this, start, end);
+        }
+
+        private sealed class StageProgress : IProgress<int>
+        {
+            private readonly PipelineProgress _parent;
+            private readonly int _start;
+            private readonly int _end;
+
+            public StageProgress(PipelineProgress parent, int start, int end)
+            {
+                _parent = parent;
+                _start = start;
+                _end = end;
+            }
+
+            public void Report(int value)
+            {
+                var clamped = Math.Clamp(value, 0, 100);
+                var mapped = _start + (int)Math.Round((_end - _start) * clamped / 100.0);
+                _parent.Report(mapped);
+            }
+        }
     }
 }
