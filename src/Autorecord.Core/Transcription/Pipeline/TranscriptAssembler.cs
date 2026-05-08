@@ -61,7 +61,7 @@ public static class TranscriptAssembler
             if (previous is not null &&
                 previous.SpeakerId == segment.SpeakerId &&
                 segment.Start - previous.End <= 1.0 &&
-                previous.Text.Length + segment.Text.Length <= 600)
+                previous.Text.Length + 1 + segment.Text.Length <= 600)
             {
                 result[^1] = previous with { End = segment.End, Text = previous.Text + " " + segment.Text };
             }

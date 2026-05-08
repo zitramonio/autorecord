@@ -105,6 +105,28 @@ public sealed class TranscriptAssemblerTests
     }
 
     [Fact]
+    public void AssembleDoesNotMergeWhenTextWithSeparatorExceedsLimit()
+    {
+        var firstText = new string('a', 300);
+        var secondText = new string('b', 300);
+        var asr = new[]
+        {
+            new TranscriptionEngineSegment(1.0, 2.0, firstText, null),
+            new TranscriptionEngineSegment(2.5, 3.0, secondText, null)
+        };
+        var turns = new[]
+        {
+            new DiarizationTurn(0.5, 3.5, "SPEAKER_00")
+        };
+
+        var segments = TranscriptAssembler.Assemble(asr, turns);
+
+        Assert.Equal(2, segments.Count);
+        Assert.Equal(firstText, segments[0].Text);
+        Assert.Equal(secondText, segments[1].Text);
+    }
+
+    [Fact]
     public void AssembleDoesNotMergeDifferentSpeakers()
     {
         var asr = new[]
