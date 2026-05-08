@@ -102,6 +102,28 @@ public sealed class TranscriptAssemblerTests
     }
 
     [Fact]
+    public void AssembleAvoidsDuplicateLabelsForCustomSpeakerAndFallbackSpeaker()
+    {
+        var asr = new[]
+        {
+            new TranscriptionEngineSegment(1.0, 2.0, "С известным спикером.", null),
+            new TranscriptionEngineSegment(10.0, 11.0, "Без спикера.", null)
+        };
+        var turns = new[]
+        {
+            new DiarizationTurn(0.5, 2.5, "custom-a")
+        };
+
+        var segments = TranscriptAssembler.Assemble(asr, turns);
+
+        Assert.Equal("custom-a", segments[0].SpeakerId);
+        Assert.Equal("Speaker 2", segments[0].SpeakerLabel);
+        Assert.Equal("SPEAKER_00", segments[1].SpeakerId);
+        Assert.Equal("Speaker 1", segments[1].SpeakerLabel);
+        Assert.NotEqual(segments[0].SpeakerLabel, segments[1].SpeakerLabel);
+    }
+
+    [Fact]
     public void AssembleMergesAdjacentSegmentsForSameSpeaker()
     {
         var asr = new[]
@@ -120,6 +142,26 @@ public sealed class TranscriptAssemblerTests
         Assert.Equal(1, segment.Id);
         Assert.Equal(1.0, segment.Start);
         Assert.Equal(3.0, segment.End);
+        Assert.Equal("Первый. Второй.", segment.Text);
+    }
+
+    [Fact]
+    public void AssembleMergesSameSpeakerIgnoringIdCase()
+    {
+        var asr = new[]
+        {
+            new TranscriptionEngineSegment(1.0, 2.0, "Первый.", null),
+            new TranscriptionEngineSegment(2.5, 3.0, "Второй.", null)
+        };
+        var turns = new[]
+        {
+            new DiarizationTurn(0.5, 2.1, "speaker_00"),
+            new DiarizationTurn(2.4, 3.5, "SPEAKER_00")
+        };
+
+        var segments = TranscriptAssembler.Assemble(asr, turns);
+
+        var segment = Assert.Single(segments);
         Assert.Equal("Первый. Второй.", segment.Text);
     }
 

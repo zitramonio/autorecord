@@ -45,7 +45,7 @@ public static class TranscriptAssembler
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         var labels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var usedNumbers = new HashSet<int>();
+        var usedNumbers = new HashSet<int> { 1 };
 
         foreach (var speakerId in speakerIds)
         {
@@ -107,7 +107,7 @@ public static class TranscriptAssembler
         {
             var previous = result.LastOrDefault();
             if (previous is not null &&
-                previous.SpeakerId == segment.SpeakerId &&
+                string.Equals(previous.SpeakerId, segment.SpeakerId, StringComparison.OrdinalIgnoreCase) &&
                 segment.Start - previous.End <= 1.0 &&
                 previous.Text.Length + 1 + segment.Text.Length <= 600)
             {
