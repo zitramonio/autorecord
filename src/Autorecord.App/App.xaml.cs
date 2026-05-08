@@ -12,6 +12,7 @@ using Autorecord.Core.Recording;
 using Autorecord.Core.Scheduling;
 using Autorecord.Core.Settings;
 using Autorecord.Core.Startup;
+using Autorecord.Core.Transcription;
 using Autorecord.Core.Transcription.Diarization;
 using Autorecord.Core.Transcription.Engines;
 using Autorecord.Core.Transcription.Jobs;
@@ -387,6 +388,7 @@ public partial class App : System.Windows.Application
         _notificationService?.ShowInfo("Запись сохранена", session.OutputPath);
         SetRecordingState(false, $"Запись сохранена: {session.OutputPath}");
         SetStatus($"Запись сохранена: {session.OutputPath}");
+        _ = EnqueueRecordingForTranscriptionAsync(session, _shutdown.Token);
     }
 
     private void RecordingCoordinator_RecordingSaveFailed(object? sender, RecordingSaveFailedEventArgs args)
@@ -747,6 +749,47 @@ public partial class App : System.Windows.Application
         catch (Exception ex)
         {
             SetStatus($"Не удалось поставить файл в очередь: {ex.Message}");
+        }
+    }
+
+    private async Task EnqueueRecordingForTranscriptionAsync(
+        RecordingSession session,
+        CancellationToken cancellationToken)
+    {
+        var transcriptionSettings = GetCurrentTranscriptionSettings();
+        if (!transcriptionSettings.AutoTranscribeAfterRecording)
+        {
+            return;
+        }
+
+        if (_transcriptionQueue is null)
+        {
+            SetStatus("Очередь транскрибации не инициализирована.");
+            return;
+        }
+
+        try
+        {
+            var enqueued = await RecordingTranscriptionEnqueuer.EnqueueAsync(
+                session,
+                transcriptionSettings,
+                ResolveTranscriptionOutputDirectory,
+                _transcriptionQueue.EnqueueAsync,
+                cancellationToken);
+            if (!enqueued)
+            {
+                return;
+            }
+
+            RefreshTranscriptionJobs();
+            _ = RunNextTranscriptionJobAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Не удалось поставить запись в очередь транскрибации: {ex.Message}");
         }
     }
 
