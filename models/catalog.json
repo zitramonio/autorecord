@@ -41,15 +41,18 @@
       "sizeMb": null,
       "requiresDiarization": false,
       "download": {
-        "url": null,
+        "url": "https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM/v3_e2e_rnnt.ckpt",
         "segmentationUrl": null,
-        "embeddingUrl": null,
+        "embeddingUrl": "https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM/v3_e2e_rnnt_tokenizer.model",
         "archiveType": null,
         "sha256": null
       },
       "install": {
         "targetFolder": "gigaam-v3-ru-quality",
-        "requiredFiles": []
+        "requiredFiles": [
+          "v3_e2e_rnnt.ckpt",
+          "v3_e2e_rnnt_tokenizer.model"
+        ]
       },
       "runtime": {
         "sampleRate": 16000,

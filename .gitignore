@@ -2,3 +2,8 @@
 bin/
 obj/
 artifacts/
+__pycache__/
+*.pyc
+tools/gigaam-worker/.venv/
+tools/gigaam-worker/build/
+tools/gigaam-worker/*.spec

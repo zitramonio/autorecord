@@ -16,4 +16,16 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
+$vendorWorker = Join-Path $root "artifacts\vendor\gigaam-worker"
+if (Test-Path $vendorWorker) {
+    $publishWorker = Join-Path $output "workers\gigaam"
+    if (Test-Path $publishWorker) {
+        Remove-Item $publishWorker -Recurse -Force
+    }
+
+    New-Item -ItemType Directory -Path $publishWorker -Force | Out-Null
+    Copy-Item (Join-Path $vendorWorker "*") $publishWorker -Recurse -Force
+    Write-Host "GigaAM worker copied: $publishWorker"
+}
+
 Write-Host "Done: $(Join-Path $output 'Autorecord.App.exe')"

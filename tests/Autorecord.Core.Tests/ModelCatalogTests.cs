@@ -204,6 +204,21 @@ public sealed class ModelCatalogTests
         Assert.Throws<InvalidOperationException>(() => catalog.GetRequired("missing"));
     }
 
+    [Fact]
+    public async Task BundledCatalogMakesGigaAmV3Downloadable()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "models", "catalog.json");
+
+        var catalog = await ModelCatalog.LoadAsync(path, CancellationToken.None);
+        var model = catalog.GetRequired("gigaam-v3-ru-quality");
+
+        Assert.Equal("gigaam-v3", model.Engine);
+        Assert.Contains("v3_e2e_rnnt.ckpt", model.Install.RequiredFiles);
+        Assert.Contains("v3_e2e_rnnt_tokenizer.model", model.Install.RequiredFiles);
+        Assert.Contains("v3_e2e_rnnt.ckpt", model.Download.Url, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("v3_e2e_rnnt_tokenizer.model", model.Download.EmbeddingUrl, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static async Task<string> WriteCatalogAsync(string json)
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "catalog.json");

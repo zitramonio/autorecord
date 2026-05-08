@@ -779,24 +779,35 @@ public partial class App : System.Windows.Application
 
         if (!string.IsNullOrWhiteSpace(model.Download.Url))
         {
-            var tempPath = await _modelDownloadService!.DownloadAsync(model, progress, cancellationToken);
+            var url = model.Download.Url;
+            var targetFileName = string.IsNullOrWhiteSpace(model.Download.ArchiveType)
+                ? GetFileNameFromUrl(url, $"{model.Id}.model")
+                : null;
+            var tempPath = await _modelDownloadService!.DownloadFileAsync(
+                url,
+                targetFileName ?? model.Id,
+                progress,
+                cancellationToken);
             tempPaths.Add(tempPath);
             artifacts.Add(new ModelInstallArtifact
             {
                 Path = tempPath,
                 ArchiveType = model.Download.ArchiveType,
+                TargetFileName = targetFileName,
                 Sha256 = model.Download.Sha256
             });
-            return artifacts;
         }
 
         if (!string.IsNullOrWhiteSpace(model.Download.SegmentationUrl))
         {
             SetStatus($"Скачивание segmentation-модели: {model.DisplayName}");
             var url = model.Download.SegmentationUrl;
+            var targetFileName = string.IsNullOrWhiteSpace(InferArchiveType(model.Download.ArchiveType, url))
+                ? GetFileNameFromUrl(url, $"{model.Id}-segmentation")
+                : null;
             var tempPath = await _modelDownloadService!.DownloadFileAsync(
                 url,
-                $"{model.Id}-segmentation",
+                targetFileName ?? $"{model.Id}-segmentation",
                 progress,
                 cancellationToken);
             tempPaths.Add(tempPath);
@@ -804,6 +815,7 @@ public partial class App : System.Windows.Application
             {
                 Path = tempPath,
                 ArchiveType = InferArchiveType(model.Download.ArchiveType, url),
+                TargetFileName = targetFileName,
                 Sha256 = model.Download.Sha256
             });
         }
@@ -1269,7 +1281,9 @@ public partial class App : System.Windows.Application
             throw new InvalidOperationException("Transcription services are not initialized.");
         }
 
-        var gigaAmWorkerPath = GetAppDataPath("Workers", "GigaAM", "worker.exe");
+        var gigaAmWorkerPath = GigaAmWorkerLocator.ResolveWorkerPath(
+            AppContext.BaseDirectory,
+            GetAppDataPath("Workers"));
         var engines = new Dictionary<string, ITranscriptionEngine>(StringComparer.OrdinalIgnoreCase)
         {
             ["sherpa-onnx"] = new SherpaOnnxTranscriptionEngine(),
