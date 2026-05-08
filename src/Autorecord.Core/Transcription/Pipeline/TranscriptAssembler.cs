@@ -14,6 +14,12 @@ public static class TranscriptAssembler
         var result = new List<TranscriptSegment>();
         foreach (var segment in asrSegments.OrderBy(segment => segment.Start))
         {
+            var text = segment.Text.Trim();
+            if (text.Length == 0)
+            {
+                continue;
+            }
+
             var speakerId = FindBestSpeaker(segment, turns);
             var label = "Speaker 1";
             if (speakerId is null)
@@ -31,7 +37,7 @@ public static class TranscriptAssembler
                 segment.End,
                 speakerId,
                 label,
-                segment.Text,
+                text,
                 segment.Confidence));
         }
 

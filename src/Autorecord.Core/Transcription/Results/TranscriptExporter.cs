@@ -7,6 +7,7 @@ namespace Autorecord.Core.Transcription.Results;
 
 public sealed class TranscriptExporter
 {
+    private const string NoSpeechMessage = "Речь не обнаружена.";
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -183,6 +184,12 @@ public sealed class TranscriptExporter
     private static string BuildTxt(TranscriptDocument document)
     {
         var builder = new StringBuilder();
+        if (document.Segments.Count == 0)
+        {
+            builder.AppendLine(NoSpeechMessage);
+            return builder.ToString();
+        }
+
         foreach (var segment in document.Segments)
         {
             builder.Append('[')
@@ -222,6 +229,12 @@ public sealed class TranscriptExporter
         }
 
         builder.AppendLine();
+
+        if (document.Segments.Count == 0)
+        {
+            builder.AppendLine(NoSpeechMessage);
+            return builder.ToString();
+        }
 
         foreach (var segment in document.Segments)
         {

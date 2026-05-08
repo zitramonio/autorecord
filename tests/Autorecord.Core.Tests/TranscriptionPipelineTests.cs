@@ -99,6 +99,52 @@ public sealed class TranscriptionPipelineTests
     }
 
     [Fact]
+    public async Task RunAsyncCompletesAndExportsNoSpeechTranscriptWhenAsrTextIsBlank()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var inputPath = Path.Combine(root, "silent.wav");
+            var outputDirectory = Path.Combine(root, "out");
+            CreateSilentWav(inputPath, new WaveFormat(16_000, 16, 1));
+            var catalog = await CreateCatalogAsync(root);
+            InstallModel(root, "asr-fast");
+            var asr = new FakeTranscriptionEngine
+            {
+                Segments = [new TranscriptionEngineSegment(0.0, 0.5, " ", null)]
+            };
+            var pipeline = CreatePipeline(
+                root,
+                catalog,
+                new Dictionary<string, ITranscriptionEngine> { ["fake-asr"] = asr },
+                new FakeDiarizationEngine(),
+                new TranscriptionSettings
+                {
+                    OutputFormats = [TranscriptOutputFormat.Txt, TranscriptOutputFormat.Json],
+                    OverwriteExistingTranscripts = true
+                });
+
+            var result = await pipeline.RunAsync(
+                CreateJob(inputPath, outputDirectory, "asr-fast", null),
+                new Progress<int>(),
+                CancellationToken.None);
+
+            Assert.Equal(2, result.OutputFiles.Count);
+            Assert.Equal(0.5, result.DurationSec);
+            Assert.All(result.OutputFiles, path => Assert.True(File.Exists(path), path));
+            Assert.Contains("Речь не обнаружена.", await File.ReadAllTextAsync(Path.Combine(outputDirectory, "silent.txt")));
+            await using var stream = File.OpenRead(Path.Combine(outputDirectory, "silent.json"));
+            using var json = await JsonDocument.ParseAsync(stream);
+            Assert.Equal(0.5, json.RootElement.GetProperty("durationSec").GetDouble());
+            Assert.Empty(json.RootElement.GetProperty("segments").EnumerateArray());
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public async Task RunAsyncThrowsWhenDiarizationModelMissingBeforeNormalizationOrEnginesRun()
     {
         var root = CreateTempRoot();
@@ -586,6 +632,8 @@ public sealed class TranscriptionPipelineTests
         public string? LastNormalizedWavPath { get; private set; }
         public Exception? Exception { get; init; }
         public bool ReportProgressEdges { get; init; }
+        public IReadOnlyList<TranscriptionEngineSegment> Segments { get; init; } =
+            [new TranscriptionEngineSegment(0.1, 1.2, "Hello from fake ASR.", 0.95)];
 
         public Task<TranscriptionEngineResult> TranscribeAsync(
             string normalizedWavPath,
@@ -606,8 +654,7 @@ public sealed class TranscriptionPipelineTests
                 progress.Report(100);
             }
 
-            return Task.FromResult(new TranscriptionEngineResult(
-                [new TranscriptionEngineSegment(0.1, 1.2, "Hello from fake ASR.", 0.95)]));
+            return Task.FromResult(new TranscriptionEngineResult(Segments));
         }
     }
 

@@ -178,6 +178,33 @@ public sealed class TranscriptExporterTests
     }
 
     [Fact]
+    public async Task ExportAsyncWritesNoSpeechMessageForEmptyTranscript()
+    {
+        var outputDirectory = CreateTempDirectory();
+        var exporter = new TranscriptExporter();
+        var document = CreateDocument() with
+        {
+            Speakers = [],
+            Segments = [],
+            RawDiarizationSegments = []
+        };
+
+        var outputFiles = await exporter.ExportAsync(
+            document,
+            outputDirectory,
+            [TranscriptOutputFormat.Txt, TranscriptOutputFormat.Markdown, TranscriptOutputFormat.Srt, TranscriptOutputFormat.Json],
+            overwrite: false,
+            CancellationToken.None);
+
+        Assert.Contains("Речь не обнаружена.", await File.ReadAllTextAsync(outputFiles.TxtPath!));
+        Assert.Contains("Речь не обнаружена.", await File.ReadAllTextAsync(outputFiles.MarkdownPath!));
+        Assert.Equal("", await File.ReadAllTextAsync(outputFiles.SrtPath!));
+        await using var stream = File.OpenRead(outputFiles.JsonPath!);
+        using var json = await JsonDocument.ParseAsync(stream);
+        Assert.Empty(json.RootElement.GetProperty("segments").EnumerateArray());
+    }
+
+    [Fact]
     public async Task ExportAsyncRejectsEmptyFormats()
     {
         var exporter = new TranscriptExporter();

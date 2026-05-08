@@ -249,4 +249,20 @@ public sealed class TranscriptAssemblerTests
         Assert.Equal("SPEAKER_00", segments[0].SpeakerId);
         Assert.Equal("SPEAKER_01", segments[1].SpeakerId);
     }
+
+    [Fact]
+    public void AssembleSkipsBlankAsrSegments()
+    {
+        var asr = new[]
+        {
+            new TranscriptionEngineSegment(0.0, 1.0, " ", null),
+            new TranscriptionEngineSegment(1.0, 2.0, "Текст.", null)
+        };
+
+        var segments = TranscriptAssembler.Assemble(asr, []);
+
+        var segment = Assert.Single(segments);
+        Assert.Equal(1, segment.Id);
+        Assert.Equal("Текст.", segment.Text);
+    }
 }

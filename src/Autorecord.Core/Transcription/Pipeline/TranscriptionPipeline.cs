@@ -95,7 +95,7 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
         var document = new TranscriptDocument
         {
             InputFile = job.InputFilePath,
-            DurationSec = segments.Count == 0 ? 0 : segments.Max(segment => segment.End),
+            DurationSec = CalculateDurationSec(segments, asrResult.Segments),
             CreatedAt = DateTimeOffset.Now,
             AsrModelId = asrModel.Id,
             AsrModelDisplayName = asrModel.DisplayName,
@@ -151,6 +151,23 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
         }
 
         return speakers;
+    }
+
+    private static double CalculateDurationSec(
+        IReadOnlyList<TranscriptSegment> segments,
+        IReadOnlyList<TranscriptionEngineSegment> asrSegments)
+    {
+        if (segments.Count > 0)
+        {
+            return segments.Max(segment => segment.End);
+        }
+
+        var lastAsrEnd = asrSegments
+            .Select(segment => segment.End)
+            .Where(end => double.IsFinite(end) && end >= 0)
+            .DefaultIfEmpty(0)
+            .Max();
+        return lastAsrEnd;
     }
 
     private void DeleteTemporaryNormalizedWavIfNeeded(NormalizedAudio normalized, string inputPath)
