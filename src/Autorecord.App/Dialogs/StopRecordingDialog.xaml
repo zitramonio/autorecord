@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Остановить запись?"
         Width="360"
-        Height="160"
+        Height="180"
         WindowStartupLocation="CenterScreen"
         Topmost="True"
         ResizeMode="NoResize">
@@ -12,7 +12,7 @@
             <RowDefinition />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <TextBlock Text="На вводе и выводе тишина. Остановить запись?"
+        <TextBlock Text="На вводе и выводе тишина. Остановить запись? Если ответа нет 2 минуты, запись остановится автоматически."
                    TextWrapping="Wrap"
                    VerticalAlignment="Center" />
         <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right">

@@ -527,13 +527,16 @@ public partial class App : System.Windows.Application
         dialog.ShowDialog();
         try
         {
-            if (dialog.Response == StopRecordingDialogResponse.Yes)
+            var action = StopRecordingPrompt.ResolveAction(dialog.Response);
+            if (action == StopRecordingPromptAction.Stop)
             {
                 await _recordingCoordinator.ConfirmStopAsync(cancellationToken);
                 SetRecordingState(false, "Запись остановлена. MP3 сохраняется...");
-                SetStatus("Запись остановлена. MP3 сохраняется...");
+                SetStatus(dialog.Response == StopRecordingDialogResponse.Timeout
+                    ? "Ответ не выбран 2 минуты. Запись остановлена. MP3 сохраняется..."
+                    : "Запись остановлена. MP3 сохраняется...");
             }
-            else if (dialog.Response == StopRecordingDialogResponse.No)
+            else if (action == StopRecordingPromptAction.Delay)
             {
                 _recordingCoordinator.DeclineStop();
             }
