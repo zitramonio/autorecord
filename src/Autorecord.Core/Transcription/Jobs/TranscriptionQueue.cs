@@ -113,6 +113,36 @@ public sealed class TranscriptionQueue
             {
                 result = await _pipeline.RunAsync(runningJob, progress, jobCancellation.Token);
             }
+            catch (TranscriptionModelNotInstalledException ex)
+            {
+                TranscriptionJob waitingJob = runningJob;
+                UpdateJob(runningJob.Id, job =>
+                {
+                    waitingJob = job with
+                    {
+                        Status = TranscriptionJobStatus.WaitingForModel,
+                        ProgressPercent = 0,
+                        StartedAt = null,
+                        FinishedAt = null,
+                        ErrorMessage = ex.Message
+                    };
+
+                    return waitingJob;
+                });
+                await SaveCurrentAsync(CancellationToken.None);
+                if (_logWriter is not null)
+                {
+                    await TryWriteJobLogAsync(token => _logWriter.WriteFinishedAsync(
+                        waitingJob,
+                        null,
+                        CalculateProcessingTime(waitingJob),
+                        token,
+                        TryReadInputDurationSec(waitingJob.InputFilePath)));
+                }
+
+                OnJobsChanged();
+                return;
+            }
             catch (OperationCanceledException)
             {
                 TranscriptionJob cancelledJob = runningJob;
@@ -229,6 +259,46 @@ public sealed class TranscriptionQueue
         await SaveCurrentAsync(cancellationToken);
         OnJobsChanged();
         return true;
+    }
+
+    public async Task<int> RetryWaitingForModelAsync(CancellationToken cancellationToken)
+    {
+        var updated = 0;
+        lock (_jobsGate)
+        {
+            var jobs = _jobs.ToArray();
+            for (var i = 0; i < jobs.Length; i++)
+            {
+                if (jobs[i].Status != TranscriptionJobStatus.WaitingForModel)
+                {
+                    continue;
+                }
+
+                jobs[i] = jobs[i] with
+                {
+                    Status = TranscriptionJobStatus.Pending,
+                    ProgressPercent = 0,
+                    StartedAt = null,
+                    FinishedAt = null,
+                    ErrorMessage = null
+                };
+                updated++;
+            }
+
+            if (updated > 0)
+            {
+                _jobs = jobs;
+            }
+        }
+
+        if (updated == 0)
+        {
+            return 0;
+        }
+
+        await SaveCurrentAsync(cancellationToken);
+        OnJobsChanged();
+        return updated;
     }
 
     public async Task<bool> CancelAsync(Guid jobId, CancellationToken cancellationToken)

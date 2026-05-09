@@ -232,6 +232,56 @@ public sealed class TranscriptionQueueTests
     }
 
     [Fact]
+    public async Task RunNextAsyncMarksWaitingForModelWhenPipelineReportsMissingModel()
+    {
+        var repository = new TranscriptionJobRepository(CreateTempPath());
+        var pipeline = new FakePipeline((_, _, _) =>
+            throw new TranscriptionModelNotInstalledException("asr-fast", "NotInstalled"));
+        var queue = new TranscriptionQueue(repository, pipeline, FixedClock);
+        await queue.EnqueueAsync(
+            "C:\\Records\\meeting.wav",
+            "C:\\Transcripts",
+            "asr-fast",
+            null,
+            CancellationToken.None);
+
+        await queue.RunNextAsync(CancellationToken.None);
+
+        var persistedJob = Assert.Single(await repository.LoadAsync(CancellationToken.None));
+        Assert.Equal(TranscriptionJobStatus.WaitingForModel, persistedJob.Status);
+        Assert.Equal(0, persistedJob.ProgressPercent);
+        Assert.Null(persistedJob.StartedAt);
+        Assert.Null(persistedJob.FinishedAt);
+        Assert.Contains("Модель не установлена", persistedJob.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task RetryWaitingForModelAsyncMovesWaitingJobsToPending()
+    {
+        var repository = new TranscriptionJobRepository(CreateTempPath());
+        var waitingJob = CreateJob() with
+        {
+            Status = TranscriptionJobStatus.WaitingForModel,
+            ProgressPercent = 12,
+            StartedAt = FixedClock(),
+            ErrorMessage = "Модель не установлена."
+        };
+        await repository.SaveAsync([waitingJob], CancellationToken.None);
+        var queue = new TranscriptionQueue(repository, new FakePipeline(Succeed), FixedClock);
+        await queue.InitializeAsync(CancellationToken.None);
+
+        var updated = await queue.RetryWaitingForModelAsync(CancellationToken.None);
+
+        var persistedJob = Assert.Single(await repository.LoadAsync(CancellationToken.None));
+        Assert.Equal(1, updated);
+        Assert.Equal(TranscriptionJobStatus.Pending, persistedJob.Status);
+        Assert.Equal(0, persistedJob.ProgressPercent);
+        Assert.Null(persistedJob.StartedAt);
+        Assert.Null(persistedJob.FinishedAt);
+        Assert.Null(persistedJob.ErrorMessage);
+    }
+
+    [Fact]
     public async Task RunNextAsyncMarksCancelledWhenPipelineCancels()
     {
         var repository = new TranscriptionJobRepository(CreateTempPath());

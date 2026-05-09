@@ -82,14 +82,13 @@ public sealed class TranscriptionPipelineTests
                 new FakeDiarizationEngine(),
                 new TranscriptionSettings { OutputFormats = [TranscriptOutputFormat.Txt] });
 
-            var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            var exception = await Assert.ThrowsAsync<TranscriptionModelNotInstalledException>(
                 () => pipeline.RunAsync(
                     CreateJob(inputPath, Path.Combine(root, "out"), "asr-fast", null),
                     new Progress<int>(),
                     CancellationToken.None));
 
-            Assert.Contains("ModelNotInstalled", exception.Message);
-            Assert.Contains("asr-fast", exception.Message);
+            Assert.Equal("asr-fast", exception.ModelId);
             Assert.Equal(0, asr.CallCount);
         }
         finally
@@ -169,14 +168,13 @@ public sealed class TranscriptionPipelineTests
                     KeepIntermediateFiles = false
                 });
 
-            var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            var exception = await Assert.ThrowsAsync<TranscriptionModelNotInstalledException>(
                 () => pipeline.RunAsync(
                     CreateJob(inputPath, Path.Combine(root, "out"), "asr-fast", "diarization-fast"),
                     new Progress<int>(),
                     CancellationToken.None));
 
-            Assert.Contains("ModelNotInstalled", exception.Message);
-            Assert.Contains("diarization-fast", exception.Message);
+            Assert.Equal("diarization-fast", exception.ModelId);
             Assert.Equal(0, asr.CallCount);
             Assert.Equal(0, diarization.CallCount);
             Assert.False(Directory.Exists(normalizedRoot));

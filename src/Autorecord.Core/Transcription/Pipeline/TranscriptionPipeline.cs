@@ -133,7 +133,7 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
         var status = await _modelManager.GetStatusAsync(model, cancellationToken);
         if (status != ModelInstallStatus.Installed)
         {
-            throw new InvalidOperationException($"ModelNotInstalled: model '{model.Id}' status is '{status}'.");
+            throw new TranscriptionModelNotInstalledException(model.Id, status.ToString());
         }
     }
 

@@ -640,6 +640,7 @@ public partial class App : System.Windows.Application
         await _transcriptionQueue.InitializeAsync(cancellationToken);
         await RefreshModelListAsync(cancellationToken);
         RefreshTranscriptionJobs();
+        RunPendingTranscriptionJobsIfAny(cancellationToken);
     }
 
     private void TranscriptionQueue_JobsChanged(object? sender, EventArgs e)
@@ -726,6 +727,8 @@ public partial class App : System.Windows.Application
                 SetModelDownloadStatus("Выбранные модели уже установлены.");
                 SetStatus("Выбранные модели уже установлены и готовы.");
                 await RefreshModelListAsync(downloadCancellation.Token);
+                await RetryWaitingForModelJobsAsync(downloadCancellation.Token);
+                RunPendingTranscriptionJobsIfAny(downloadCancellation.Token);
                 return;
             }
 
@@ -747,6 +750,8 @@ public partial class App : System.Windows.Application
                 ? $"Модель установлена и готова: {installedModels[0]}."
                 : $"Модели установлены и готовы: {string.Join(", ", installedModels)}.");
             await RefreshModelListAsync(downloadCancellation.Token);
+            await RetryWaitingForModelJobsAsync(downloadCancellation.Token);
+            RunPendingTranscriptionJobsIfAny(downloadCancellation.Token);
         }
         catch (OperationCanceledException) when (downloadCancellation.IsCancellationRequested)
         {
@@ -1224,15 +1229,23 @@ public partial class App : System.Windows.Application
 
         try
         {
-            await _transcriptionQueue.RunNextAsync(cancellationToken);
-            RefreshTranscriptionJobs();
-            var lastFinishedJob = _transcriptionQueue.Jobs
-                .Where(job => job.FinishedAt is not null)
-                .OrderByDescending(job => job.FinishedAt)
-                .FirstOrDefault();
-            if (lastFinishedJob is not null)
+            while (!cancellationToken.IsCancellationRequested)
             {
-                _transcriptionNotificationService?.ShowFinished(lastFinishedJob);
+                var nextJobId = _transcriptionQueue.Jobs
+                    .FirstOrDefault(job => job.Status == TranscriptionJobStatus.Pending)
+                    ?.Id;
+                if (nextJobId is null)
+                {
+                    break;
+                }
+
+                await _transcriptionQueue.RunNextAsync(cancellationToken);
+                RefreshTranscriptionJobs();
+                var processedJob = FindTranscriptionJob(nextJobId.Value);
+                if (processedJob?.FinishedAt is not null)
+                {
+                    _transcriptionNotificationService?.ShowFinished(processedJob);
+                }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -1243,6 +1256,30 @@ public partial class App : System.Windows.Application
             SetStatus($"Не удалось выполнить задачу транскрибации: {ex.Message}");
             RefreshTranscriptionJobs();
         }
+    }
+
+    private async Task RetryWaitingForModelJobsAsync(CancellationToken cancellationToken)
+    {
+        if (_transcriptionQueue is null)
+        {
+            return;
+        }
+
+        var updated = await _transcriptionQueue.RetryWaitingForModelAsync(cancellationToken);
+        if (updated > 0)
+        {
+            RefreshTranscriptionJobs();
+        }
+    }
+
+    private void RunPendingTranscriptionJobsIfAny(CancellationToken cancellationToken)
+    {
+        if (_transcriptionQueue?.Jobs.Any(job => job.Status == TranscriptionJobStatus.Pending) != true)
+        {
+            return;
+        }
+
+        _ = RunNextTranscriptionJobAsync(cancellationToken);
     }
 
     private bool TryGetSelectedModel(out ModelCatalogEntry model)
