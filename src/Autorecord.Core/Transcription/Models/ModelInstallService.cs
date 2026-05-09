@@ -205,24 +205,27 @@ public sealed class ModelInstallService(ModelManager modelManager)
             return;
         }
 
-        if (Directory.EnumerateFiles(stagingPath).Any())
-        {
-            return;
-        }
-
         var directories = Directory.EnumerateDirectories(stagingPath).ToArray();
-        if (directories.Length != 1 || !HasRequiredFiles(model, directories[0]))
+        if (directories.Length != 1 || !HasRequiredFilesAcrossRoots(model, stagingPath, directories[0]))
         {
             return;
         }
 
-        foreach (var filePath in Directory.EnumerateFiles(directories[0]))
+        var childFiles = Directory.EnumerateFiles(directories[0]).ToArray();
+        var childDirectories = Directory.EnumerateDirectories(directories[0]).ToArray();
+        if (childFiles.Any(filePath => File.Exists(System.IO.Path.Combine(stagingPath, System.IO.Path.GetFileName(filePath)))) ||
+            childDirectories.Any(directoryPath => Directory.Exists(System.IO.Path.Combine(stagingPath, System.IO.Path.GetFileName(directoryPath)))))
+        {
+            return;
+        }
+
+        foreach (var filePath in childFiles)
         {
             var destinationPath = System.IO.Path.Combine(stagingPath, System.IO.Path.GetFileName(filePath));
             File.Move(filePath, destinationPath);
         }
 
-        foreach (var directoryPath in Directory.EnumerateDirectories(directories[0]))
+        foreach (var directoryPath in childDirectories)
         {
             var destinationPath = System.IO.Path.Combine(stagingPath, System.IO.Path.GetFileName(directoryPath));
             Directory.Move(directoryPath, destinationPath);
@@ -236,6 +239,20 @@ public sealed class ModelInstallService(ModelManager modelManager)
         foreach (var requiredFile in model.Install.RequiredFiles)
         {
             if (!File.Exists(GetContainedChildPath(root, requiredFile)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool HasRequiredFilesAcrossRoots(ModelCatalogEntry model, string root, string childRoot)
+    {
+        foreach (var requiredFile in model.Install.RequiredFiles)
+        {
+            if (!File.Exists(GetContainedChildPath(root, requiredFile)) &&
+                !File.Exists(GetContainedChildPath(childRoot, requiredFile)))
             {
                 return false;
             }

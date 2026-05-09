@@ -204,6 +204,41 @@ public sealed class ModelInstallServiceTests
     }
 
     [Fact]
+    public async Task InstallAsyncFlattensFolderedArchiveWhenPlainArtifactIsAlsoInstalled()
+    {
+        var root = CreateTempRoot();
+        var archivePath = Path.Combine(root, "segmentation.tar.bz2");
+        var embeddingPath = Path.Combine(root, "embedding.download");
+        CreateTarBz2Archive(archivePath, new Dictionary<string, string>
+        {
+            ["segmentation/model.int8.onnx"] = "onnx"
+        });
+        await File.WriteAllTextAsync(embeddingPath, "embedding");
+        var model = CreateModel(
+            id: "diarization-model",
+            targetFolder: "diarization-model",
+            archiveType: "tar.bz2",
+            requiredFiles:
+            [
+                "model.int8.onnx",
+                "embedding.onnx"
+            ]);
+        var service = new ModelInstallService(new ModelManager(root));
+
+        await service.InstallAsync(
+            model,
+            [
+                new ModelInstallArtifact { Path = archivePath, ArchiveType = "tar.bz2" },
+                new ModelInstallArtifact { Path = embeddingPath, TargetFileName = "embedding.onnx" }
+            ],
+            CancellationToken.None);
+
+        Assert.True(File.Exists(Path.Combine(root, "diarization-model", "model.int8.onnx")));
+        Assert.True(File.Exists(Path.Combine(root, "diarization-model", "embedding.onnx")));
+        Assert.False(Directory.Exists(Path.Combine(root, "diarization-model", "segmentation")));
+    }
+
+    [Fact]
     public async Task InstallAsyncRestoresExistingModelAndManifestWhenManifestUpdateFailsAfterPublish()
     {
         var root = CreateTempRoot();

@@ -703,21 +703,42 @@ public partial class App : System.Windows.Application
             SetModelDownloadBusy(true);
             SetModelDownloadProgress(new ModelDownloadProgress());
             var progress = new Progress<ModelDownloadProgress>(SetModelDownloadProgress);
-            var installedModels = new List<string>();
-            await DownloadAndInstallModelAsync(model, progress, tempPaths, downloadCancellation.Token);
-            installedModels.Add(model.DisplayName);
+            var modelStatus = await _modelManager.GetStatusAsync(model, downloadCancellation.Token);
+            ModelCatalogEntry? diarizationModel = null;
+            ModelInstallStatus? diarizationStatus = null;
 
             if (transcriptionSettings.EnableDiarization
                 && !string.IsNullOrWhiteSpace(transcriptionSettings.SelectedDiarizationModelId))
             {
-                var diarizationModel = _modelCatalog.GetRequired(transcriptionSettings.SelectedDiarizationModelId);
-                var diarizationStatus = await _modelManager.GetStatusAsync(diarizationModel, downloadCancellation.Token);
-                if (diarizationStatus != ModelInstallStatus.Installed)
+                diarizationModel = _modelCatalog.GetRequired(transcriptionSettings.SelectedDiarizationModelId);
+                diarizationStatus = await _modelManager.GetStatusAsync(diarizationModel, downloadCancellation.Token);
+            }
+
+            var modelsToInstall = ModelDownloadPlan.Create(
+                model,
+                modelStatus,
+                transcriptionSettings.EnableDiarization,
+                diarizationModel,
+                diarizationStatus);
+            if (modelsToInstall.Count == 0)
+            {
+                SetModelDownloadProgress(100);
+                SetModelDownloadStatus("Выбранные модели уже установлены.");
+                SetStatus("Выбранные модели уже установлены и готовы.");
+                await RefreshModelListAsync(downloadCancellation.Token);
+                return;
+            }
+
+            var installedModels = new List<string>();
+            foreach (var modelToInstall in modelsToInstall)
+            {
+                if (installedModels.Count > 0)
                 {
                     SetModelDownloadProgress(new ModelDownloadProgress());
-                    await DownloadAndInstallModelAsync(diarizationModel, progress, tempPaths, downloadCancellation.Token);
-                    installedModels.Add(diarizationModel.DisplayName);
                 }
+
+                await DownloadAndInstallModelAsync(modelToInstall, progress, tempPaths, downloadCancellation.Token);
+                installedModels.Add(modelToInstall.DisplayName);
             }
 
             SetModelDownloadProgress(100);

@@ -112,12 +112,13 @@ public static class TranscriptAssembler
         foreach (var segment in segments)
         {
             var previous = result.LastOrDefault();
+            var mergedText = previous is null ? "" : MergeTextWithBoundaryDedup(previous.Text, segment.Text);
             if (previous is not null &&
                 string.Equals(previous.SpeakerId, segment.SpeakerId, StringComparison.OrdinalIgnoreCase) &&
                 segment.Start - previous.End <= 1.0 &&
-                previous.Text.Length + 1 + segment.Text.Length <= 600)
+                mergedText.Length <= 600)
             {
-                result[^1] = previous with { End = segment.End, Text = previous.Text + " " + segment.Text };
+                result[^1] = previous with { End = segment.End, Text = mergedText };
             }
             else
             {
@@ -126,5 +127,46 @@ public static class TranscriptAssembler
         }
 
         return result.Select((segment, index) => segment with { Id = index + 1 }).ToList();
+    }
+
+    private static string MergeTextWithBoundaryDedup(string first, string second)
+    {
+        var firstWords = first.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var secondWords = second.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var maxOverlap = Math.Min(firstWords.Length, secondWords.Length);
+
+        for (var overlap = maxOverlap; overlap >= 2; overlap--)
+        {
+            if (!WordsMatch(firstWords, firstWords.Length - overlap, secondWords, 0, overlap))
+            {
+                continue;
+            }
+
+            var suffix = string.Join(" ", secondWords.Skip(overlap));
+            return suffix.Length == 0 ? first : first + " " + suffix;
+        }
+
+        return first + " " + second;
+    }
+
+    private static bool WordsMatch(
+        IReadOnlyList<string> firstWords,
+        int firstStart,
+        IReadOnlyList<string> secondWords,
+        int secondStart,
+        int count)
+    {
+        for (var i = 0; i < count; i++)
+        {
+            if (!string.Equals(
+                    firstWords[firstStart + i],
+                    secondWords[secondStart + i],
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

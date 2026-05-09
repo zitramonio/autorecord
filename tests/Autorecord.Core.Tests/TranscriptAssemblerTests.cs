@@ -146,6 +146,25 @@ public sealed class TranscriptAssemblerTests
     }
 
     [Fact]
+    public void AssembleRemovesExactBoundaryOverlapWhenMergingSameSpeakerSegments()
+    {
+        var asr = new[]
+        {
+            new TranscriptionEngineSegment(1.0, 20.0, "Обсудим план проекта и сроки", null),
+            new TranscriptionEngineSegment(20.0, 40.0, "план проекта и сроки поставки", null)
+        };
+        var turns = new[]
+        {
+            new DiarizationTurn(0.5, 40.5, "SPEAKER_00")
+        };
+
+        var segments = TranscriptAssembler.Assemble(asr, turns);
+
+        var segment = Assert.Single(segments);
+        Assert.Equal("Обсудим план проекта и сроки поставки", segment.Text);
+    }
+
+    [Fact]
     public void AssembleMergesSameSpeakerIgnoringIdCase()
     {
         var asr = new[]
