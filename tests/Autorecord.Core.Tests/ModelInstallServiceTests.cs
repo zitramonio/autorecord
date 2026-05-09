@@ -307,7 +307,7 @@ public sealed class ModelInstallServiceTests
     private static void CreateTarBz2Archive(string path, IReadOnlyDictionary<string, string> entries)
     {
         using var stream = File.Create(path);
-        using var writer = WriterFactory.Open(
+        using var writer = WriterFactory.OpenWriter(
             stream,
             ArchiveType.Tar,
             new WriterOptions(CompressionType.BZip2));

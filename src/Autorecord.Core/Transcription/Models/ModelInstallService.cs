@@ -151,7 +151,7 @@ public sealed class ModelInstallService(ModelManager modelManager)
         CancellationToken cancellationToken)
     {
         await using var file = File.OpenRead(archivePath);
-        using var reader = ReaderFactory.Open(file);
+        using var reader = ReaderFactory.OpenReader(file, new ReaderOptions());
         while (reader.MoveToNextEntry())
         {
             cancellationToken.ThrowIfCancellationRequested();
