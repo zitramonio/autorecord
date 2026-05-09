@@ -527,4 +527,29 @@ public static class MainWindowTranscriptionSettings
 
         return (!string.IsNullOrWhiteSpace(selectedDiarizationModelId), selectedDiarizationModelId);
     }
+
+    public static IReadOnlyList<string> ResolveSelectedModelIdsForAction(
+        string? selectedAsrModelId,
+        string? selectedDiarizationModelId,
+        TranscriptionSettings currentSettings)
+    {
+        var modelIds = new List<string>();
+        var asrModelId = string.IsNullOrWhiteSpace(selectedAsrModelId)
+            ? currentSettings.SelectedAsrModelId
+            : selectedAsrModelId;
+        if (!string.IsNullOrWhiteSpace(asrModelId))
+        {
+            modelIds.Add(asrModelId);
+        }
+
+        var (enableDiarization, diarizationModelId) = ResolveDiarizationSelection(
+            selectedDiarizationModelId,
+            currentSettings);
+        if (enableDiarization && !string.IsNullOrWhiteSpace(diarizationModelId))
+        {
+            modelIds.Add(diarizationModelId);
+        }
+
+        return modelIds.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
 }

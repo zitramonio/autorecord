@@ -172,10 +172,10 @@
                         Скачать
                     </Button>
                     <Button x:Name="DeleteModelButton"
-                            Width="120"
+                            Width="150"
                             Margin="0,0,8,8"
                             Click="DeleteModel_Click">
-                        Удалить
+                        Удалить выбранные
                     </Button>
                     <Button x:Name="CancelDownloadModelButton"
                             Width="120"
@@ -185,10 +185,10 @@
                         Отменить
                     </Button>
                     <Button x:Name="ValidateModelButton"
-                            Width="120"
+                            Width="160"
                             Margin="0,0,8,8"
                             Click="ValidateModel_Click">
-                        Проверить
+                        Проверить выбранные
                     </Button>
                     <Button x:Name="OpenModelsFolderButton"
                             Width="150"

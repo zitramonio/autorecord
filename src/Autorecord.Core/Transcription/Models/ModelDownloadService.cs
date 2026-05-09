@@ -2,7 +2,10 @@ using System.Diagnostics;
 
 namespace Autorecord.Core.Transcription.Models;
 
-public sealed class ModelDownloadService(HttpClient httpClient, string downloadsRoot)
+public sealed class ModelDownloadService(
+    HttpClient httpClient,
+    string downloadsRoot,
+    Func<string, long?>? getAvailableFreeSpaceBytes = null)
 {
     private const int BufferSize = 81920;
 
@@ -45,6 +48,7 @@ public sealed class ModelDownloadService(HttpClient httpClient, string downloads
             }
 
             var totalBytes = response.Content.Headers.ContentLength;
+            EnsureEnoughDiskSpace(root, totalBytes);
             await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
             await using var destination = new FileStream(
                 tempPath,
@@ -82,6 +86,38 @@ public sealed class ModelDownloadService(HttpClient httpClient, string downloads
         {
             DeleteTempFile(tempPath);
             throw;
+        }
+    }
+
+    private void EnsureEnoughDiskSpace(string root, long? requiredBytes)
+    {
+        if (requiredBytes is not > 0)
+        {
+            return;
+        }
+
+        var availableBytes = getAvailableFreeSpaceBytes?.Invoke(root) ?? GetAvailableFreeSpaceBytes(root);
+        if (availableBytes is not null && availableBytes.Value < requiredBytes.Value)
+        {
+            throw new NotEnoughDiskSpaceException(requiredBytes.Value, availableBytes.Value);
+        }
+    }
+
+    private static long? GetAvailableFreeSpaceBytes(string path)
+    {
+        try
+        {
+            var root = Path.GetPathRoot(Path.GetFullPath(path));
+            if (string.IsNullOrWhiteSpace(root))
+            {
+                return null;
+            }
+
+            return new DriveInfo(root).AvailableFreeSpace;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            return null;
         }
     }
 

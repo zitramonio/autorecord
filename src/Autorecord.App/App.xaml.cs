@@ -760,7 +760,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex)
         {
-            SetStatus($"Не удалось скачать или установить модель: {ex.Message}");
+            SetStatus(UserFacingErrorMessages.ForModelDownload(ex));
         }
         finally
         {
@@ -924,18 +924,23 @@ public partial class App : System.Windows.Application
 
     private async Task DeleteSelectedModelAsync(CancellationToken cancellationToken)
     {
-        if (!TryGetSelectedModel(out var model) || _modelManager is null)
+        if (!TryGetSelectedModelsForAction(out var models) || _modelManager is null)
         {
             return;
         }
 
         try
         {
-            await Task.Run(
-                () => _modelManager.DeleteAsync(model, cancellationToken).GetAwaiter().GetResult(),
-                cancellationToken);
-            var status = await _modelManager.GetStatusAsync(model, cancellationToken);
-            SetStatus($"Модель удалена. Статус: {status}.");
+            foreach (var model in models)
+            {
+                await Task.Run(
+                    () => _modelManager.DeleteAsync(model, cancellationToken).GetAwaiter().GetResult(),
+                    cancellationToken);
+            }
+
+            SetStatus(models.Count == 1
+                ? $"Модель удалена: {models[0].DisplayName}."
+                : $"Модели удалены: {string.Join(", ", models.Select(model => model.DisplayName))}.");
             await RefreshModelListAsync(cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -949,16 +954,23 @@ public partial class App : System.Windows.Application
 
     private async Task ValidateSelectedModelAsync(CancellationToken cancellationToken)
     {
-        if (!TryGetSelectedModel(out var model) || _modelManager is null)
+        if (!TryGetSelectedModelsForAction(out var models) || _modelManager is null)
         {
             return;
         }
 
         try
         {
-            var status = await _modelManager.GetStatusAsync(model, cancellationToken);
-            SetSelectedModelStatus($"Статус модели: {status}");
-            SetStatus($"Проверка модели завершена: {status}.");
+            var statuses = new List<string>();
+            foreach (var model in models)
+            {
+                var status = await _modelManager.GetStatusAsync(model, cancellationToken);
+                statuses.Add($"{model.DisplayName}: {status}");
+            }
+
+            var statusText = string.Join("; ", statuses);
+            SetSelectedModelStatus($"Статус модели: {statusText}");
+            SetStatus($"Проверка моделей завершена: {statusText}.");
             await RefreshModelListAsync(cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -966,7 +978,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex)
         {
-            SetStatus($"Не удалось проверить модель: {ex.Message}");
+            SetStatus(UserFacingErrorMessages.ForModelValidation(ex));
         }
     }
 
@@ -1170,7 +1182,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex)
         {
-            SetStatus($"Не удалось поставить файл в очередь: {ex.Message}");
+            SetStatus(UserFacingErrorMessages.ForTranscription(ex));
         }
     }
 
@@ -1216,7 +1228,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex)
         {
-            SetStatus($"Не удалось поставить запись в очередь транскрибации: {ex.Message}");
+            SetStatus(UserFacingErrorMessages.ForTranscription(ex));
         }
     }
 
@@ -1253,7 +1265,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex)
         {
-            SetStatus($"Не удалось выполнить задачу транскрибации: {ex.Message}");
+            SetStatus(UserFacingErrorMessages.ForTranscription(ex));
             RefreshTranscriptionJobs();
         }
     }
@@ -1320,6 +1332,40 @@ public partial class App : System.Windows.Application
             SetStatus($"Модель не найдена: {ex.Message}");
             return false;
         }
+    }
+
+    private bool TryGetSelectedModelsForAction(out IReadOnlyList<ModelCatalogEntry> models)
+    {
+        models = [];
+        if (_modelCatalog is null || _mainWindow is null)
+        {
+            SetStatus("Каталог моделей не загружен.");
+            return false;
+        }
+
+        var modelIds = MainWindowTranscriptionSettings.ResolveSelectedModelIdsForAction(
+            _mainWindow.SelectedAsrModelId,
+            _mainWindow.SelectedDiarizationModelId,
+            GetCurrentTranscriptionSettings());
+        var selectedModels = new List<ModelCatalogEntry>();
+        foreach (var modelId in modelIds)
+        {
+            if (!TryGetModelById(modelId, out var model))
+            {
+                return false;
+            }
+
+            selectedModels.Add(model);
+        }
+
+        if (selectedModels.Count == 0)
+        {
+            SetStatus("Модель не выбрана.");
+            return false;
+        }
+
+        models = selectedModels;
+        return true;
     }
 
     private void RefreshTranscriptionJobs()

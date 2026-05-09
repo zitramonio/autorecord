@@ -157,11 +157,34 @@ public sealed class ModelDownloadServiceTests
         Assert.StartsWith(Path.GetFullPath(root), Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task DownloadAsyncThrowsNotEnoughDiskSpaceBeforeWritingTempFile()
+    {
+        var root = CreateTempRoot();
+        var service = CreateService(
+            root,
+            _ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(new byte[1024])
+            },
+            _ => 10);
+
+        var error = await Assert.ThrowsAsync<NotEnoughDiskSpaceException>(
+            () => service.DownloadAsync(CreateModel(), null, CancellationToken.None));
+
+        Assert.Contains("Недостаточно места", error.Message);
+        Assert.Empty(Directory.GetFiles(root, "*.download"));
+    }
+
     private static ModelDownloadService CreateService(
         string root,
-        Func<HttpRequestMessage, HttpResponseMessage> responseFactory)
+        Func<HttpRequestMessage, HttpResponseMessage> responseFactory,
+        Func<string, long?>? getAvailableFreeSpaceBytes = null)
     {
-        return new ModelDownloadService(new HttpClient(new FakeHttpMessageHandler(responseFactory)), root);
+        return new ModelDownloadService(
+            new HttpClient(new FakeHttpMessageHandler(responseFactory)),
+            root,
+            getAvailableFreeSpaceBytes);
     }
 
     private static string CreateTempRoot()
