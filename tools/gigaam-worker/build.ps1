@@ -1,3 +1,7 @@
+param(
+    [string]$PythonExe = ""
+)
+
 $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
@@ -5,30 +9,67 @@ $venv = Join-Path $PSScriptRoot ".venv"
 $python = Join-Path $venv "Scripts\python.exe"
 $output = Join-Path $root "artifacts\vendor\gigaam-worker"
 
-if (!(Test-Path $python)) {
-    py -3.10 -m venv $venv
+function Invoke-Checked {
+    param(
+        [string]$FilePath,
+        [string[]]$Arguments
+    )
+
+    & $FilePath @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Command failed with exit code $LASTEXITCODE`: $FilePath $($Arguments -join ' ')"
+    }
 }
 
-& $python -m pip install --upgrade pip
-& $python -m pip install -r (Join-Path $PSScriptRoot "requirements.txt") pyinstaller
+if (!(Test-Path $python)) {
+    if ($PythonExe) {
+        Invoke-Checked $PythonExe @("-m", "venv", $venv)
+        if (!(Test-Path $python)) {
+            throw "Failed to create GigaAM worker venv with PythonExe: $PythonExe"
+        }
+    }
+    else {
+        $created = $false
+        foreach ($version in @("3.10", "3.11", "3.12")) {
+            py "-$version" -m venv $venv
+            if ($LASTEXITCODE -eq 0 -and (Test-Path $python)) {
+                $created = $true
+                break
+            }
+
+            if (Test-Path $venv) {
+                Remove-Item $venv -Recurse -Force
+            }
+        }
+
+        if (!$created) {
+            throw "Python 3.10, 3.11, or 3.12 is required to build the GigaAM worker. Pass -PythonExe to use a specific interpreter."
+        }
+    }
+}
+
+Invoke-Checked $python @("-m", "pip", "install", "--upgrade", "pip")
+Invoke-Checked $python @("-m", "pip", "install", "-r", (Join-Path $PSScriptRoot "requirements.txt"), "pyinstaller")
 
 if (Test-Path $output) {
     Remove-Item $output -Recurse -Force
 }
 
-& $python -m PyInstaller `
-    --noconfirm `
-    --clean `
-    --onedir `
-    --name worker `
-    --distpath $output `
-    --workpath (Join-Path $PSScriptRoot "build") `
-    --specpath $PSScriptRoot `
-    --collect-all gigaam `
-    --collect-all hydra `
-    --collect-all omegaconf `
-    --collect-all sentencepiece `
+Invoke-Checked $python @(
+    "-m", "PyInstaller",
+    "--noconfirm",
+    "--clean",
+    "--onedir",
+    "--name", "worker",
+    "--distpath", $output,
+    "--workpath", (Join-Path $PSScriptRoot "build"),
+    "--specpath", $PSScriptRoot,
+    "--collect-all", "gigaam",
+    "--collect-all", "hydra",
+    "--collect-all", "omegaconf",
+    "--collect-all", "sentencepiece",
     (Join-Path $PSScriptRoot "worker.py")
+)
 
 $workerDir = Join-Path $output "worker"
 $workerExe = Join-Path $workerDir "worker.exe"

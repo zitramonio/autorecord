@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import array
 import json
 import math
 import os
-import tempfile
+import sys
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,10 +24,11 @@ MIN_SPEECH_SECONDS = 0.30
 
 @dataclass(frozen=True)
 class Audio:
-    frames: bytes
+    path: Path
     sample_rate: int
     channels: int
     sample_width: int
+    total_samples: int
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,7 @@ def main() -> int:
         return 0
 
     import gigaam  # Imported after local model validation to avoid implicit downloads.
+    import torch
 
     model = gigaam.load_model(
         args.model_name,
@@ -66,21 +69,17 @@ def main() -> int:
     )
 
     segments = []
-    with tempfile.TemporaryDirectory(prefix="autorecord-gigaam-") as temp_dir:
-        for chunk in speech_chunks:
-            chunk_path = Path(temp_dir) / f"chunk-{len(segments):05d}.wav"
-            write_chunk(audio, chunk.decode, chunk_path)
-            result = model.transcribe(str(chunk_path))
-            text = getattr(result, "text", str(result)).strip()
-            if text:
-                segments.append(
-                    {
-                        "start": round(chunk.output.start, 3),
-                        "end": round(chunk.output.end, 3),
-                        "text": text,
-                        "confidence": None,
-                    }
-                )
+    for chunk in speech_chunks:
+        text = transcribe_chunk(model, torch, audio, chunk.decode)
+        if text:
+            segments.append(
+                {
+                    "start": round(chunk.output.start, 3),
+                    "end": round(chunk.output.end, 3),
+                    "text": text,
+                    "confidence": None,
+                }
+            )
 
     write_result(output_json_path, segments)
     return 0
@@ -112,10 +111,11 @@ def require_model_files(model_path: Path, model_name: str) -> None:
 def read_normalized_wav(path: Path) -> Audio:
     with wave.open(str(path), "rb") as wav:
         audio = Audio(
-            frames=wav.readframes(wav.getnframes()),
+            path=path,
             sample_rate=wav.getframerate(),
             channels=wav.getnchannels(),
             sample_width=wav.getsampwidth(),
+            total_samples=wav.getnframes(),
         )
 
     if audio.sample_rate != SAMPLE_RATE or audio.channels != CHANNELS or audio.sample_width != SAMPLE_WIDTH:
@@ -150,13 +150,20 @@ def build_speech_chunks(audio: Audio) -> list[Chunk]:
 
 def detect_speech(audio: Audio) -> list[Interval]:
     frame_samples = max(1, int(FRAME_SECONDS * audio.sample_rate))
-    total_samples = len(audio.frames) // SAMPLE_WIDTH
     energies: list[float] = []
+    frame_bounds: list[Interval] = []
 
-    for start_sample in range(0, total_samples, frame_samples):
-        end_sample = min(total_samples, start_sample + frame_samples)
-        frame = audio.frames[start_sample * SAMPLE_WIDTH : end_sample * SAMPLE_WIDTH]
-        energies.append(rms_pcm16(frame))
+    with wave.open(str(audio.path), "rb") as wav:
+        for start_sample in range(0, audio.total_samples, frame_samples):
+            frame = wav.readframes(frame_samples)
+            if not frame:
+                break
+
+            frame_sample_count = len(frame) // audio.sample_width
+            frame_start = start_sample / audio.sample_rate
+            frame_end = min((start_sample + frame_sample_count) / audio.sample_rate, duration_seconds(audio))
+            frame_bounds.append(Interval(frame_start, frame_end))
+            energies.append(rms_pcm16(frame))
 
     if not energies:
         return []
@@ -169,8 +176,8 @@ def detect_speech(audio: Audio) -> list[Interval]:
     intervals: list[Interval] = []
     active_start: float | None = None
     for index, energy in enumerate(energies):
-        frame_start = index * FRAME_SECONDS
-        frame_end = min(frame_start + FRAME_SECONDS, duration_seconds(audio))
+        frame_start = frame_bounds[index].start
+        frame_end = frame_bounds[index].end
         if energy >= threshold:
             active_start = frame_start if active_start is None else active_start
         elif active_start is not None:
@@ -221,16 +228,23 @@ def pad_interval(interval: Interval, duration: float) -> Interval:
     )
 
 
-def write_chunk(audio: Audio, interval: Interval, path: Path) -> None:
+def transcribe_chunk(model: object, torch: object, audio: Audio, interval: Interval) -> str:
     start_sample = max(0, int(math.floor(interval.start * audio.sample_rate)))
-    end_sample = min(len(audio.frames) // SAMPLE_WIDTH, int(math.ceil(interval.end * audio.sample_rate)))
-    frames = audio.frames[start_sample * SAMPLE_WIDTH : end_sample * SAMPLE_WIDTH]
+    end_sample = min(audio.total_samples, int(math.ceil(interval.end * audio.sample_rate)))
+    with wave.open(str(audio.path), "rb") as wav_file:
+        wav_file.setpos(start_sample)
+        frame_bytes = wav_file.readframes(end_sample - start_sample)
 
-    with wave.open(str(path), "wb") as wav:
-        wav.setnchannels(audio.channels)
-        wav.setsampwidth(audio.sample_width)
-        wav.setframerate(audio.sample_rate)
-        wav.writeframes(frames)
+    samples = array.array("h")
+    samples.frombytes(frame_bytes)
+
+    with torch.inference_mode():
+        wav = torch.tensor(samples, dtype=torch.float32, device=model._device) / 32768.0
+        wav = wav.to(model._device).to(model._dtype).unsqueeze(0)
+        length = torch.full([1], wav.shape[-1], device=model._device)
+        encoded, encoded_len = model.forward(wav, length)
+        text, _ = model._decode(encoded, encoded_len, length, False)[0]
+        return text.strip()
 
 
 def rms_pcm16(frame: bytes) -> float:
@@ -247,7 +261,7 @@ def rms_pcm16(frame: bytes) -> float:
 
 
 def duration_seconds(audio: Audio) -> float:
-    return len(audio.frames) / (audio.sample_rate * audio.sample_width)
+    return audio.total_samples / audio.sample_rate
 
 
 def write_result(path: Path, segments: list[dict[str, object]]) -> None:
@@ -259,4 +273,8 @@ def write_result(path: Path, segments: list[dict[str, object]]) -> None:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception as error:
+        print(str(error), file=sys.stderr)
+        raise SystemExit(1)

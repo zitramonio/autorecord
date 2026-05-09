@@ -1,1 +1,1 @@
-gigaam[torch] @ git+https://github.com/salute-developers/GigaAM.git@main
+gigaam[torch] @ git+https://github.com/salute-developers/GigaAM.git@6e4b027c6fb554e09e8b9059b757a175295ab879

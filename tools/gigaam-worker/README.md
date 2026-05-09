@@ -39,4 +39,11 @@ does not trigger network downloads.
 
 Build note: GigaAM v3 is currently available from the upstream GitHub code path,
 not from the older PyPI `gigaam==0.1.0` package. The worker requirements install
-the upstream package source with the `torch` extra for packaging.
+the upstream package source with the `torch` extra for packaging, pinned to the
+commit used for the verified worker build.
+
+If Python 3.10 is not available through `py`, pass an explicit interpreter:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\gigaam-worker\build.ps1 -PythonExe C:\Path\To\python.exe
+```
