@@ -38,6 +38,41 @@ public sealed class NaudioWavRecorderTests
     }
 
     [Fact]
+    public void CalculateDueFramesUsesElapsedTimeWithLatency()
+    {
+        var elapsed = TimeSpan.FromMinutes(5);
+
+        var dueFrames = NaudioWavRecorder.CalculateDueFrames(
+            elapsed,
+            sampleRate: 48_000,
+            latency: TimeSpan.FromMilliseconds(200));
+
+        Assert.Equal(14_390_400, dueFrames);
+    }
+
+    [Fact]
+    public void CalculateFinalFramesUsesExactStopElapsedTime()
+    {
+        var elapsed = TimeSpan.FromMinutes(5) + TimeSpan.FromMilliseconds(375);
+
+        var finalFrames = NaudioWavRecorder.CalculateFinalFrames(elapsed, sampleRate: 48_000);
+
+        Assert.Equal(14_418_000, finalFrames);
+    }
+
+    [Fact]
+    public void CalculateSamplesToWriteDoesNotExceedTargetOrBuffer()
+    {
+        var samples = NaudioWavRecorder.CalculateSamplesToWrite(
+            targetFrames: 48_000,
+            framesWritten: 47_990,
+            channels: 2,
+            maxSamples: 960);
+
+        Assert.Equal(20, samples);
+    }
+
+    [Fact]
     public void ConvertToMixedFormatBypassesResamplerWhenSourceAlreadyMatches()
     {
         var format = WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2);
