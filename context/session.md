@@ -1,19 +1,383 @@
 # Сессия
 
 - Текущее состояние: MVP реализован в `.worktrees/mvp` на ветке `feature/mvp`.
+- Актуальный фокус: подготовка v2 локальной транскрибации поверх текущего MVP без изменения поведения записи.
 - Что уже есть:
   - `context/` с файлами проектного контекста.
   - `docs/superpowers/specs/2026-05-06-autorecord-design.md` с дизайном MVP.
   - `docs/superpowers/plans/2026-05-06-autorecord-mvp.md` с пошаговым планом реализации.
+  - `docs/huggingface-token-pyannote.md` с пользовательской инструкцией и картинками по получению Hugging Face token для Pyannote Community-1.
   - `.worktrees/mvp/Autorecord.sln` с WPF-приложением и core-библиотекой.
+  - `.worktrees/mvp/docs/superpowers/specs/2026-05-07-autorecord-v2-transcription-design.md` с утверждаемой дизайн-спекой v2.
+  - `.worktrees/mvp/docs/superpowers/specs/2026-05-08-model-install-flow-design.md` с design addendum по установке моделей из GUI.
+  - `.worktrees/mvp/docs/superpowers/plans/2026-05-07-autorecord-v2-transcription.md` с implementation plan v2 по фазам A-G.
+  - `TranscriptionSettings` и строгая валидация transcription settings в `SettingsStore`.
+  - `models/catalog.json` и `ModelCatalog` с валидацией поврежденного JSON.
+  - Skeleton вкладки `Транскрибация` в `MainWindow`.
+  - `ModelManager` с защитой путей внутри models root.
+  - `ModelDownloadService` с progress, cancellation cleanup и безопасным temp path.
+  - `ModelInstallService` и `ModelInstallArtifact`: установка скачанных моделей через staging, `requiredFiles` validation, `manifest.json`, `zip`, `tar.bz2` через `SharpCompress` и plain file copy.
+  - `TranscriptionJobRepository` с валидацией и атомарным сохранением `jobs.json`.
+  - `ITranscriptionPipeline`, `TranscriptionPipelineResult` и `TranscriptionQueue` с fake pipeline contract.
+  - `AudioNormalizer` для app-created `.mp3`/`.wav`: нормализует в 16 kHz mono PCM WAV под temp root.
+  - `ITranscriptionEngine`, `TranscriptionEngineResult`, `TranscriptionEngineSegment` и `SherpaOnnxTranscriptionEngine` на `org.k2fsa.sherpa.onnx` 1.13.0.
+  - `SherpaOnnxTranscriptionEngine` обрабатывает normalized WAV чанками по 20 секунд с 0.25 сек padding, не читая длинную запись целиком в память.
+  - `GigaAmWorkerClient` и `GigaAmV3TranscriptionEngine` worker shell: локальный process contract без shell window, с cancellation kill+wait и stderr diagnostics.
+  - `tools/gigaam-worker/` с исходником локального GigaAM worker, `requirements.txt`, `build.ps1` и README для сборки внешнего `worker.exe`.
+  - `GigaAmWorkerLocator`: приложение ищет GigaAM worker сначала в publish-папке `workers/gigaam/worker.exe`, затем в `%LOCALAPPDATA%\Autorecord\Workers\GigaAM\worker.exe`.
+  - `models/catalog.json` делает `gigaam-v3-ru-quality` скачиваемой моделью: `v3_e2e_rnnt.ckpt` и `v3_e2e_rnnt_tokenizer.model` устанавливаются как required files.
+  - `scripts/publish.ps1` требует `artifacts/vendor/gigaam-worker/worker.exe` до publish и копирует готовый внешний artifact в publish output `workers/gigaam`.
+  - `IDiarizationEngine` и `DiarizationEngine` на sherpa-onnx speaker diarization; normalized WAV обрабатывается 30-минутными chunks с 5 сек padding, speaker ids маппятся между chunks по реальному overlap, короткие/соседние turns очищаются.
+  - `TranscriptAssembler` назначает ASR-сегменты спикерам по overlap, стабилизирует labels и merge-ит соседние реплики одного speaker.
+  - `TranscriptExporter` для `.txt`, `.md`, `.srt`, `.json` с безопасной записью через temp/move.
+  - `TranscriptionPipeline` связывает проверку моделей, нормализацию, optional diarization, ASR, assembly, export и cleanup временного normalized WAV после success.
+  - `LocalNetworkGuard` защищает transcription runtime: pipeline перед запуском проверяет, что ASR/диаризация/pipeline/jobs/results/models не содержат сетевых API; `ModelDownloadService` остается единственной сетевой boundary-точкой для явного GUI-скачивания моделей.
+  - `TranscriptAssembler` удаляет точный ASR boundary-overlap при merge соседних сегментов одного speaker, чтобы длинные записи не получали повторенный текст на стыках chunks.
+  - WPF-вкладка `Транскрибация` подключена к catalog/model status/download/delete/validate/open models folder и ручному выбору файла для очереди.
+  - GUI-настройки транскрибации расширены: ASR combo из catalog, режим диаризации с вариантом `Без разделения по спикерам`, speaker count `Auto/1..6`, отдельная папка транскриптов, форматы `TXT/Markdown/SRT/JSON`.
+  - GUI скачивания моделей показывает progress bar, скачано/всего/скорость, поддерживает отмену активного скачивания/установки и блокирует конкурирующие model actions на время операции.
+  - В списке заданий транскрибации добавлены действия `Текст`, `Папка`, `Повторить`, `Отменить`, `Удалить`.
+  - `TranscriptionQueue` живет на уровне приложения, использует свежий pipeline на текущих настройках и сообщает GUI прогресс через `JobsChanged`.
+  - `TranscriptionQueue` поддерживает `RetryAsync`, `CancelAsync`, `DeleteAsync`; running job отменяется через per-job `CancellationToken`, running job нельзя удалить.
+  - `TranscriptionJobLogWriter` пишет локальные job-логи в `%LOCALAPPDATA%\Autorecord\Logs\transcription-job-{id}.log`: metadata задания, модели, старт/финиш, duration, processing time, output files и ошибку без текста транскрипта.
+  - `TranscriptionQueue` пишет job-логи best-effort: ошибки записи логов или чтения duration из битого `.wav` не ломают статус задания и очередь.
+  - `RecordingSaved` подключен к `TranscriptionQueue`: при включенной автотранскрибации сохраненная запись автоматически ставится в очередь.
+  - `RecordingTranscriptionEnqueuer` покрывает выбор папки транскриптов рядом с записью или в `CustomFolder`, ASR-модель и optional diarization model.
+  - `models/catalog.json` копируется в output приложения.
+  - В GUI есть статус записи и ручные кнопки `Начать запись` / `Остановить запись`.
+  - В GUI есть настройка `Держать микрофон готовым для мгновенного старта`.
+  - Recorder поддерживает фоновую подготовку аудиоустройств, но не добавляет звук до нажатия `Начать запись` в файл.
+  - Итоговые записи сохраняются как `.mp3`; внутри записи используется временный `.recording.wav` в 16-bit PCM.
+  - Готов publish-скрипт `.worktrees/mvp/scripts/publish.ps1`.
+  - Опубликованный `.exe`: `.worktrees/mvp/artifacts/publish/Autorecord/Autorecord.App.exe`.
+  - Последняя тестовая publish-сборка: `.worktrees/mvp/artifacts/publish/Autorecord-mp3-no-preroll/Autorecord.App.exe`.
+  - Последняя publish-сборка: `.worktrees/mvp/artifacts/publish/Autorecord-mp3-safe-save/Autorecord.App.exe`.
+  - Остановка записи быстро закрывает временный `.recording.wav`, MP3 сохраняется в фоне.
+  - Финальный `.mp3` появляется только после успешной конвертации; `.recording.wav` удаляется только после успеха.
+  - При ошибке MP3-конвертации резервный `.recording.wav` остается на диске, приложение показывает уведомление/статус.
+  - При запуске и после сохранения настроек приложение ищет незавершенные `.recording.wav` в выбранной папке и пытается восстановить MP3.
   - Локальный .NET SDK установлен в `C:\Users\User\.dotnet`.
+  - Для v2 согласовано: финальная запись остается `.mp3`; транскрибация создает временный normalized `.wav` сама.
+  - Для v2 согласовано: папка аудиозаписей и папка транскриптов могут различаться.
+  - Для v2 согласовано: диаризация архитектурно отдельна от ASR, но входит в единый автоматический pipeline после записи.
 - Проверено:
   - `dotnet test Autorecord.sln` — 53/53 passed.
   - `dotnet build Autorecord.sln -c Release` — 0 warnings, 0 errors.
   - smoke run `--minimized` стартовал и был остановлен без оставшегося процесса.
   - после bugfix `fbfb519`: `dotnet build Autorecord.sln` — 0 warnings, 0 errors; `dotnet test Autorecord.sln` — 53/53 passed.
+  - Пользователь вручную подтвердил: запись стартует по встрече, stop prompt появляется во время пауз, файл сохраняется в нужную папку и формат, в WAV есть микрофон и системный вывод.
+  - После добавления ручных кнопок: `dotnet test Autorecord.sln` — 53/53 passed; `dotnet build Autorecord.sln -c Release` — 0 warnings, 0 errors.
+  - `scripts/publish.ps1` создал publish-папку; опубликованный `Autorecord.App.exe` стартовал в smoke-проверке с `--minimized` и был остановлен.
+  - Диагностика подтвердила: конец записи обрезался из-за недописанных аудиобуферов; исправлено ожиданием drain буферов.
+  - Пользователь подтвердил: после диагностического warmup начало записи слышно нормально, но задержка кнопки неприемлема как UX.
+  - После реализации pre-roll: `dotnet test Autorecord.sln` — 65/65 passed; `dotnet build Autorecord.sln -c Release` — 0 warnings, 0 errors.
+  - Publish `Autorecord-preroll` собран; smoke-запуск опубликованного `.exe` прошел.
+  - После перехода на MP3: `dotnet test Autorecord.sln` — 67/67 passed; `dotnet build Autorecord.sln -c Release` — 0 warnings, 0 errors.
+  - Отдельный тест MediaFoundation подтвердил конвертацию временного WAV в непустой MP3.
+  - Publish `Autorecord-mp3` собран; smoke-запуск опубликованного `.exe` прошел.
+  - После удаления pre-roll из файла: `dotnet test Autorecord.sln` — 64/64 passed; `dotnet build Autorecord.sln -c Release` — 0 warnings, 0 errors.
+  - Publish `Autorecord-mp3-no-preroll` собран; smoke-запуск опубликованного `.exe` прошел.
+  - После safe-save изменений `dotnet test Autorecord.sln --no-restore` — 68/68 passed.
+  - После safe-save изменений `dotnet build Autorecord.sln --no-restore` — 0 warnings, 0 errors.
+  - Publish `Autorecord-mp3-safe-save` собран успешно.
+  - После восстановления состояния проекта: `dotnet test Autorecord.sln --no-restore` — 68/68 passed.
+  - После восстановления состояния проекта: `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors.
+  - Спека v2 создана и закоммичена: `db63d20 docs: design local transcription v2`.
+  - Implementation plan v2 создан и закоммичен: `cd1ac64 docs: plan local transcription v2`.
+  - В режиме Subagent-Driven выполнены и прошли review gates: Phase A, Phase B, Task 6 и Task 7.
+  - После Task 7: `dotnet test .\Autorecord.sln --no-restore` — 181/181 passed.
+  - После Task 7: `dotnet build .\Autorecord.sln --no-restore` — 0 warnings, 0 errors.
+  - Task 8 `TranscriptionQueue` выполнен и прошел spec-review/code-quality review.
+  - После Task 8: `dotnet test .\Autorecord.sln --no-restore` — 190/190 passed.
+  - После Task 8: `dotnet build .\Autorecord.sln --no-restore` — 0 warnings, 0 errors.
+  - Task 9 `AudioNormalizer` выполнен и прошел spec-review/code-quality review.
+  - После Task 9: `dotnet test .\Autorecord.sln --no-restore` — 195/195 passed.
+  - После Task 9: `dotnet build .\Autorecord.sln --no-restore` — 0 warnings, 0 errors.
+  - Task 10 `SherpaOnnxTranscriptionEngine` выполнен и прошел spec-review/code-quality review.
+  - После Task 10: `dotnet test .\Autorecord.sln --no-restore` — 198/198 passed.
+  - После Task 10: `dotnet build .\Autorecord.sln --no-restore` — 0 warnings, 0 errors.
+  - Task 11 `DiarizationEngine` выполнен и прошел spec-review/code-quality review.
+  - После Task 11: `dotnet test .\Autorecord.sln --no-restore` — 223/223 passed.
+  - После Task 11: `dotnet build .\Autorecord.sln --no-restore` — 0 warnings, 0 errors.
+  - Task 12 `TranscriptAssembler` выполнен и прошел spec-review/code-quality review.
+  - После Task 12: `dotnet test .\Autorecord.sln --no-restore` — 235/235 passed.
+  - После Task 12: `dotnet build .\Autorecord.sln --no-restore` — 0 warnings, 0 errors.
+  - Task 13 `GigaAM worker contract` выполнен и прошел spec-review/code-quality review.
+  - После Task 13: `GigaAmWorkerClientTests` — 4/4 passed; полный `dotnet test .\Autorecord.sln --no-restore` — 239/239 passed.
+  - После Task 13: `dotnet build .\Autorecord.sln --no-restore` — 0 warnings, 0 errors.
+  - Task 14 `TranscriptionPipeline` выполнен и прошел spec-review/code-quality review.
+  - После Task 14: `TranscriptionPipelineTests` — 12/12 passed; `TranscriptionQueueTests` — 9/9 passed.
+  - После Task 14: полный `dotnet test .\Autorecord.sln --no-restore` — 251/251 passed.
+  - После Task 14: `dotnet build .\Autorecord.sln --no-restore` — 0 warnings, 0 errors.
+  - Task 15 WPF wiring выполнен и прошел spec-review/code-quality review.
+  - После Task 15: `TranscriptionQueueTests` — 10/10 passed.
+  - После Task 15: полный `dotnet test .\Autorecord.sln --no-restore` — 252/252 passed.
+  - После Task 15: `dotnet build .\Autorecord.sln --no-restore` — 0 warnings, 0 errors.
+  - Task 16 auto enqueue после `RecordingSaved` выполнен и прошел spec-review/code-quality review.
+  - После Task 16: `RecordingTranscriptionEnqueuerTests` — 4/4 passed.
+  - После Task 16: `RecordingTranscriptionEnqueuerTests|TranscriptionQueueTests` — 13/13 passed.
+  - После Task 16: полный `dotnet test .\Autorecord.sln --no-restore` — 256/256 passed.
+  - После Task 16: `dotnet build .\Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors.
+  - После Task 16: `scripts/publish.ps1` собрал `.worktrees/mvp/artifacts/publish/Autorecord/Autorecord.App.exe`.
+  - После Task 16: smoke-запуск опубликованного `.exe --minimized` прошел, процесс был остановлен.
+  - Design addendum model install flow создан и закоммичен: `b2e2b63 docs: design model install flow`.
+  - Follow-up model install flow выполнен и прошел spec-review/code-quality review.
+  - После model install flow: `ModelInstallServiceTests|ModelDownloadServiceTests|ModelManagerTests` — 30/30 passed.
+  - После model install flow: полный `dotnet test .\Autorecord.sln --no-restore` — 265/265 passed.
+  - После model install flow: `dotnet build .\Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors.
+  - После model install flow: `scripts/publish.ps1` собрал `.worktrees/mvp/artifacts/publish/Autorecord/Autorecord.App.exe`.
+  - После model install flow: smoke-запуск опубликованного `.exe --minimized` прошел, процесс был остановлен.
+  - После GUI settings readiness `f9d4c9d`: code-quality review — approved, findings нет.
+  - После GUI settings readiness `f9d4c9d`: `dotnet test .\Autorecord.sln --no-restore` — 268/268 passed.
+  - После GUI settings readiness `f9d4c9d`: `dotnet build .\Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors.
+  - После GUI settings readiness `f9d4c9d`: `scripts/publish.ps1` собрал `.worktrees/mvp/artifacts/publish/Autorecord/Autorecord.App.exe`; smoke-запуск `--minimized` прошел.
+  - После job actions `7fc300d`: spec-review и code-quality review — approved после закрытия двух P1 concurrency findings.
+  - После job actions `7fc300d`: targeted `TranscriptionQueueTests|TranscriptionJobListItemViewModelTests` — 18/18 passed.
+  - После job actions `7fc300d`: полный `dotnet test .\Autorecord.sln --no-restore` — 276/276 passed.
+  - После job actions `7fc300d`: `dotnet build .\Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors.
+  - После job actions `7fc300d`: `scripts/publish.ps1` собрал `.worktrees/mvp/artifacts/publish/Autorecord/Autorecord.App.exe`; smoke-запуск `--minimized` прошел.
+  - После model download progress controls `58f661c`: spec-review — PASS; code-quality review — PASS после блокировки `Удалить`/`Проверить` во время active download/install.
+  - После model download progress controls `58f661c`: targeted `ModelDownloadServiceTests|ModelDownloadProgressTextTests` — 10/10 passed.
+  - После model download progress controls `58f661c`: полный `dotnet test Autorecord.sln --no-restore` — 278/278 passed.
+  - После model download progress controls `58f661c`: `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors.
+  - После model download progress controls `58f661c`: `dotnet publish src\Autorecord.App\Autorecord.App.csproj -c Release -o artifacts\publish --no-restore` прошел; smoke-запуск опубликованного `.exe --minimized` прошел.
+  - После LocalNetworkGuard `36cfc7d`: spec-review — PASS; code-quality review — PASS после закрытия false negative по method bodies, exact source exemption, accessors, recursive generic args, `Dns` и static constructors.
+  - После LocalNetworkGuard `36cfc7d`: targeted `LocalNetworkGuardTests|TranscriptionPipelineTests` — 21/21 passed.
+  - После LocalNetworkGuard `36cfc7d`: полный `dotnet test Autorecord.sln --no-restore` — 287/287 passed.
+  - После LocalNetworkGuard `36cfc7d`: `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors.
+  - После LocalNetworkGuard `36cfc7d`: `dotnet publish src\Autorecord.App\Autorecord.App.csproj -c Release -o artifacts\publish --no-restore` прошел; smoke-запуск опубликованного `.exe --minimized` прошел.
+  - После transcription job logs `53578f3`: spec-review и code-quality review — approved после фиксов best-effort logging и битого `.wav`.
+  - После transcription job logs `53578f3`: targeted tests job logs/pipeline duration — 6/6 passed.
+  - После transcription job logs `53578f3`: полный `dotnet test Autorecord.sln --no-restore` — 293/293 passed.
+  - После transcription job logs `53578f3`: `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors.
+  - После transcription job logs `53578f3`: `dotnet publish src\Autorecord.App\Autorecord.App.csproj -c Release -o artifacts\publish --no-restore` прошел; smoke-запуск опубликованного `.exe --minimized` прошел.
+  - Автоматизируемая часть Task 18 acceptance checks прошла через временный harness без изменения кода:
+    - `sherpa-gigaam-v2-ru-fast` реально скачана с GitHub (`166917722` bytes), распакована и установлена в изолированный root `C:\Users\User\AppData\Local\AutorecordAcceptance\20260508-174737`.
+    - `ModelManager` после установки вернул `Installed`, `requiredFiles` найдены, `manifest.json` создан.
+    - Offline `TranscriptionPipeline` на установленной модели обработал локальный `tts-input.wav` и создал `.txt`, `.md`, `.srt`, `.json`.
+    - `TranscriptionQueue` завершила job со статусом `Completed`, сохранила 4 output files и job-log в `Logs\transcription-job-*.log`.
+  - WPF acceptance checks Task 18 выполнены:
+    - GUI cancel/download/install модели проверены на реальной sherpa-модели; после отмены temp очищается, после установки статус `Installed`, после рестарта статус сохраняется.
+    - GUI manual file enqueue проверен на `tts-input.wav`: job `Completed`, рядом созданы `.txt`, `.md`, `.srt`, `.json`, повторная обработка создала `transcript 2/3.*`.
+    - Действия истории `Текст`, `Папка`, `Повторить`, `Удалить` проверены через GUI.
+    - Найден дефект default-настроек: у старых `settings.json` без секции `Transcription` автотранскрибация была выключена. Исправлено в `fa0e9c0 fix: enable transcription by default`.
+    - После исправления опубликованный GUI показал `AutoTranscribeBox = On`, короткая запись с речью `08.05.2026 18.57.mp3` автоматически попала в очередь и создала `.txt`, `.md`, `.srt`, `.json` рядом с записью.
+    - После `fa0e9c0`: targeted RED/GREEN test прошел, полный `dotnet test Autorecord.sln --no-restore` — 293/293 passed, `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors, `scripts/publish.ps1` пересобрал publish.
+  - UX для тихих записей / пустого transcript закрыт в `a0908a0 fix: handle empty transcription results`:
+    - Blank ASR-сегменты фильтруются перед сборкой transcript.
+    - Пустой transcript экспортируется без ошибки: TXT/Markdown содержат `Речь не обнаружена.`, SRT пустой, JSON содержит `segments: []`.
+    - `DurationSec` не обнуляется, если ASR вернул тайминг пустого сегмента; duration берется из ASR-интервалов.
+    - После `a0908a0`: targeted tests passed, полный `dotnet test Autorecord.sln --no-restore` — 296/296 passed, `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors, publish пересобран.
+    - Review gates пройдены: spec-review PASS, code-quality review approved после фикса duration finding.
+  - WPF cancel для running transcription job проверен без изменения кода:
+    - Через GUI добавлен длинный `cancel-running-input.wav`.
+    - После `Повторить` running job отменен кнопкой `Отменить`.
+    - Repository сохранил `Cancelled`, `Transcription job was cancelled.`, `outputFiles = []`.
+    - Рядом с тестовым WAV transcript-файлы не созданы; job-log содержит `Status: Cancelled`.
+  - Chunking/streamed read для sherpa ASR закрыт в `9154f09 feat: chunk sherpa transcription input`:
+    - `SherpaOnnxTranscriptionEngine` режет normalized WAV на 20-секундные ASR chunks с 0.25 сек контекста слева/справа.
+    - Decode window не превышает 30 секунд; таймкоды сегментов остаются глобальными и неперекрывающимися.
+    - Длинный WAV больше не читается целиком в `byte[]`/`float[]`; в память попадает только текущее окно.
+    - Поддержана отмена между chunks и progress `0..100`; отмена после финального `100%` не ломает уже завершенный результат.
+    - Небезопасная full-chunk дедупликация не добавлена; точная boundary-dedupe оставлена на будущий этап.
+    - После `9154f09`: targeted tests passed, полный `dotnet test Autorecord.sln --no-restore` — 299/299 passed, `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors, `dotnet publish src/Autorecord.App/Autorecord.App.csproj -c Release --no-restore` прошел.
+    - Review gates пройдены: spec-review PASS и code-quality review PASS после удаления unsafe дедупликации и фикса final-progress cancellation.
+  - Chunking/streamed read для diarization закрыт в `7c84e26 feat: chunk diarization input`:
+    - `DiarizationEngine` режет normalized WAV на 30-минутные chunks с 5 сек padding.
+    - Длинный WAV больше не читается целиком в память для диаризации; в память попадает только текущее окно.
+    - Локальные timestamps chunk-диаризации переводятся в глобальные и клипуются по основному chunk window.
+    - Speaker ids между chunks сопоставляются только по реальному overlap в padding; без overlap создаются новые глобальные `SPEAKER_XX`.
+    - Исправлены review-блокеры: chunk-local speaker ids и ложное speaker mapping через artificial merge gap.
+    - После `7c84e26`: `DiarizationEngineTests` — 30/30 passed, полный `dotnet test Autorecord.sln --no-restore` — 304/304 passed, `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors, `dotnet publish src/Autorecord.App/Autorecord.App.csproj -c Release --no-restore` прошел.
+    - Review gates пройдены: финальные spec-review и code-quality review — PASS.
+  - Реальная упаковочная инфраструктура GigaAM worker закрыта в `b39c917 feat: add gigaam worker packaging`:
+    - Добавлен VAD-aware worker source для GigaAM v3: normalized WAV 16 kHz mono PCM режется на speech chunks с target 20 сек, max 24 сек и padding 0.25 сек.
+    - Worker проверяет локальные `v3_e2e_rnnt.ckpt` и `v3_e2e_rnnt_tokenizer.model` до импорта/загрузки GigaAM, чтобы транскрибация не инициировала implicit downloads.
+    - JSON contract worker остается совместимым с `GigaAmWorkerClient`: segments со `start`, `end`, `text`, `confidence`.
+    - Добавлен locator bundled/AppData worker path и тесты.
+    - `models/catalog.json` обновлен для скачивания двух plain artifacts GigaAM v3 через GUI.
+    - `scripts/publish.ps1` готов включать внешний `worker.exe` из `artifacts/vendor/gigaam-worker`.
+    - После `b39c917`: `py -3 -m py_compile tools\gigaam-worker\worker.py` прошел, полный `dotnet test Autorecord.sln --no-restore` — 308/308 passed, `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors, `scripts/publish.ps1` прошел.
+    - Review gates пройдены: spec-review PASS и code-quality review PASS.
+  - Реальная упаковка и runtime-проверка GigaAM worker закрыты в `6abec32 fix: package gigaam worker runtime`:
+    - `requirements.txt` закреплен на проверенный commit GigaAM `6e4b027c6fb554e09e8b9059b757a175295ab879`.
+    - `build.ps1` поддерживает явный `-PythonExe`, предпочитает Python 3.10/3.11/3.12 и проверяет exit code у venv/pip/PyInstaller.
+    - Worker больше не вызывает `model.transcribe(file)` и не требует `ffmpeg`: normalized WAV читается самим worker, затем используется `model.forward` / `_decode`.
+    - Worker не загружает весь WAV в память: VAD читает файл фреймами, ASR читает только текущий chunk через `setpos/readframes`.
+    - `publish.ps1` теперь fail-fast требует `artifacts/vendor/gigaam-worker/worker.exe`; без artifact publish не выпускает приложение без GigaAM worker.
+    - Собран внешний artifact `artifacts/vendor/gigaam-worker/worker.exe`; publish скопировал его в `artifacts/publish/Autorecord/workers/gigaam`.
+    - Опубликованный `worker.exe` прошел end-to-end smoke на реальной скачанной GigaAM v3 модели и тестовом русском WAV: создан JSON с распознанным сегментом.
+    - После `6abec32`: `dotnet test Autorecord.sln --no-restore` — 308/308 passed, `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors, `scripts/publish.ps1` прошел.
+    - Review gates пройдены: spec-review PASS и code-quality re-review PASS.
+  - GUI-проверка GigaAM v3 quality mode выполнена без изменения кода:
+    - В опубликованном WPF-приложении выбрана ASR-модель `Русский — качество` / `gigaam-v3-ru-quality`.
+    - Модель скачана/установлена через вкладку `Транскрибация`; manifest в `%LOCALAPPDATA%\Autorecord\Models` показывает `status = Installed`.
+    - Через GUI выбран тестовый `gigaam-v3-input.wav`; job `aaf78abe-55fa-48eb-b641-a6370846d38f` завершился `Completed`.
+    - Рядом с WAV созданы `gigaam-v3-input.txt`, `.md`, `.srt`, `.json`; JSON содержит `asrModelId = gigaam-v3-ru-quality`.
+    - Проверка была без диаризации, чтобы изолированно подтвердить GigaAM worker и GUI-download/use flow.
+    - Worktree `.worktrees/mvp` остался чистым.
+  - Download-flow и установка diarization для GUI закрыты:
+    - Добавлен `ModelDownloadPlan`: если выбранная ASR уже установлена, а не установлена только выбранная diarization-модель, кнопка `Скачать` скачивает только diarization-модель.
+    - Если все выбранные модели уже установлены, download-flow не делает сетевых запросов и показывает статус готовности.
+    - Исправлен `ModelInstallService`: foldered `tar.bz2` segmentation archive теперь flatten-ится вместе с plain embedding `.onnx` в корень установленной модели.
+    - Root cause: при mixed archive+plain install старый flatten не работал, потому что в staging root уже был embedding file; `model.int8.onnx` оставался во вложенной папке и required-files validation не проходил.
+    - Flatten делает preflight conflict check перед любым `Move`, чтобы не оставлять частично перемещенное дерево при конфликте.
+    - Добавлены tests `ModelDownloadPlanTests` и regression test `InstallAsyncFlattensFolderedArchiveWhenPlainArtifactIsAlsoInstalled`.
+    - После фикса: targeted tests — 11/11 passed, полный `dotnet test Autorecord.sln --no-restore` — 311/311 passed, `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors, `scripts/publish.ps1` прошел.
+    - Review gates: spec-review PASS; code-quality review approved после фикса P1 partial flatten.
+  - GUI e2e `GigaAM v3 + Спикеры — быстро` выполнен:
+    - `sherpa-diarization-pyannote-fast` установлен через опубликованный WPF GUI; `gigaam-v3-ru-quality` не переустанавливался (`installedAt` не изменился).
+    - Тестовый `gigaam-v3-input.wav` обработан с ASR `gigaam-v3-ru-quality` и diarization `sherpa-diarization-pyannote-fast`.
+    - Job `b01aa103-7a25-46be-8c9e-af70ceb5b20d` завершился `Completed`.
+    - Рядом с WAV созданы `.txt`, `.md`, `.srt`, `.json`; JSON содержит `diarizationModelId = sherpa-diarization-pyannote-fast`, `rawDiarizationSegments = 2`, `Speaker 1`.
+  - Точная дедупликация ASR boundary-overlap выполнена:
+    - `TranscriptAssembler` удаляет совпадающий suffix/prefix от двух слов и больше при объединении соседних сегментов одного speaker.
+    - Regression test сначала падал на дубле текста, затем прошел после исправления.
+    - После исправления: `TranscriptAssemblerTests` — 14/14 passed; route check автотранскрибации/экспорта — 5/5 passed; полный `dotnet test Autorecord.sln --no-restore` — 312/312 passed; `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors.
+  - GUI end-to-end проверка реальной записи с автотранскрибацией и отдельной папкой транскриптов выполнена:
+    - Актуальный publish пересобран через `scripts/publish.ps1`, GigaAM worker попал в `artifacts/publish/Autorecord/workers/gigaam`.
+    - Через WPF GUI выполнена запись: `C:\Users\User\AppData\Local\AutorecordAcceptance\wpf-real-recording\recordings\09.05.2026 19.28.mp3`.
+    - После `RecordingSaved` файл автоматически поставлен в очередь; job `a2f1bd48-3aed-4f5e-a778-96c361e97d66` завершился `Completed`.
+    - Использованы `gigaam-v3-ru-quality` и `sherpa-diarization-pyannote-fast`.
+    - Транскрипты `.txt`, `.md`, `.srt`, `.json` созданы в отдельной папке `C:\Users\User\AppData\Local\AutorecordAcceptance\wpf-real-recording\transcripts`; папка записи содержит только MP3.
+    - JSON содержит `segments = 1`, `rawDiarizationSegments = 4`, `Speaker 1`; job-log содержит `Status: Completed`.
+    - Настройки приложения после проверки возвращены к исходной папке документов.
+  - GUI end-to-end проверка multi-speaker path выполнена на synthetic TTS:
+    - Через WPF записан локальный двухголосый WAV (`Microsoft Pavel` + `Microsoft Irina`) через системный вывод.
+    - Source WAV: `C:\Users\User\AppData\Local\AutorecordAcceptance\wpf-multispeaker\multi-speaker-source.wav`, 30.58 сек, PCM 22050 Hz mono.
+    - Запись: `C:\Users\User\AppData\Local\AutorecordAcceptance\wpf-multispeaker\recordings\09.05.2026 19.41.mp3`, 545327 bytes.
+    - Job `68ce8407-bc22-4a54-8820-5e37b7da58e4` завершился `Completed`, progress `100`, без ошибки.
+    - Output dir: `C:\Users\User\AppData\Local\AutorecordAcceptance\wpf-multispeaker\transcripts`.
+    - JSON `09.05.2026 19.41.json`: `segments = 2`, `rawDiarizationSegments = 8`, speakers `Speaker 1` и `Speaker 2`.
+    - `.txt`, `.md`, `.srt`, `.json` созданы; `.txt/.md/.srt` содержат `Speaker 1` и `Speaker 2`.
+    - Настройки приложения после проверки возвращены к исходной папке документов.
+  - Task Scheduler autostart проверен и заблокирован текущими Windows permissions/policy:
+    - `StartupManager.SetEnabled(true, exe)`, `schtasks /Create ...` и прямой `TaskService.RootFolder.RegisterTaskDefinition(...)` завершились `E_ACCESSDENIED` / `Access is denied`.
+    - Служба Schedule работает (`Running/Auto`), но текущая сессия не дает создать per-user scheduled task.
+    - Проверочные задачи очищены; автозапуск не оставлен включенным.
+    - Это остается релизным blocker/decision point: elevated-проверка Task Scheduler или fallback per-user startup.
+  - Fallback автозапуска реализован:
+    - `StartupManager` сначала пробует Task Scheduler, а при `UnauthorizedAccessException` или COM `0x80070005` включает `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+    - Registry fallback пишет команду `"Autorecord.App.exe" --minimized`.
+    - `IsEnabled()` учитывает оба механизма и продолжает работать, если Task Scheduler check падает с access denied.
+    - Отключение автозапуска пытается удалить и scheduled task, и HKCU Run value.
+    - GUI не менялся: остается один чекбокс `Запускать вместе с Windows`.
+    - Проверки: `StartupManagerTests` — 14/14 passed; полный `dotnet test Autorecord.sln --no-restore` — 320/320 passed; `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors; `scripts/publish.ps1` прошел; `git diff --check` — без ошибок, только CRLF warnings.
+  - GUI-проверка fallback автозапуска выполнена:
+    - Через опубликованный `Autorecord.App.exe` включен чекбокс `Запускать вместе с Windows`.
+    - Приложение создало fallback value в `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`: `"C:\Projects\autorecord\.worktrees\mvp\artifacts\publish\Autorecord\Autorecord.App.exe" --minimized`.
+    - После выключения чекбокса fallback value удален.
+    - Исходные `settings.json` и registry-состояние восстановлены; автозапуск не оставлен включенным.
+  - Checkpoint commit создан: `ef637f0 fix: add startup fallback`.
+    - Worktree `.worktrees/mvp` чистый на ветке `feature/mvp`.
+  - Финальный checkpoint commit создан: `3610c04 fix: harden transcription model flow`.
+    - Перед commit: `dotnet test Autorecord.sln --no-restore` — 312/312 passed; `git diff --check` — без whitespace errors, только CRLF warnings; `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors; `scripts/publish.ps1` прошел.
+  - Review hardening очереди транскрибации закрыт в `1c4bdf9 fix: keep missing model jobs waiting`:
+    - Missing ASR/diarization model теперь бросает `TranscriptionModelNotInstalledException`, а `TranscriptionQueue` переводит job в `WaitingForModel`, не в `Failed`.
+    - После успешного скачивания/установки модели `WaitingForModel` jobs возвращаются в `Pending` и очередь запускается снова.
+    - При старте приложения восстановленные `Pending` jobs автоматически подхватываются и обрабатываются последовательно.
+    - Проверки: targeted `TranscriptionQueueTests|TranscriptionPipelineTests` — 34/34 passed; полный `dotnet test Autorecord.sln --no-restore` — 322/322 passed; `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors; `scripts/publish.ps1` прошел; published smoke `--minimized` прошел.
+    - Worktree `.worktrees/mvp` чистый на ветке `feature/mvp`.
+  - Minor review follow-ups закрыты в `209190d fix: polish transcription model errors`:
+    - `Удалить выбранные` и `Проверить выбранные` теперь работают по выбранному набору моделей: ASR + включенная diarization-модель.
+    - `ModelDownloadService` делает precheck свободного места по `Content-Length` до записи temp-файла и возвращает понятную ошибку `Недостаточно места...`.
+    - Добавлен `UserFacingErrorMessages` для download/validation/transcription ошибок: missing model, failed download, validation failed, unsupported audio/output folder.
+    - Проверки: targeted `MainWindowTranscriptionSettingsTests|ModelDownloadServiceTests|UserFacingErrorMessagesTests` — 19/19 passed; полный `dotnet test Autorecord.sln --no-restore` — 331/331 passed; `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors; `scripts/publish.ps1` прошел; published smoke `--minimized` прошел.
+    - Worktree `.worktrees/mvp` чистый на ветке `feature/mvp`.
+  - Silent stop prompt timeout закрыт в `071bbf9 fix: auto-stop silent recording prompt`:
+    - Диалог остановки после молчания теперь ждет выбор `Да/Нет` 2 минуты.
+    - Если выбора нет, timeout трактуется как `Да`: запись останавливается через обычный `ConfirmStopAsync`, затем `RecordingSaved` запускает существующую автотранскрибацию, если она включена.
+    - `Нет` по-прежнему откладывает остановку, закрытие окна без выбора игнорирует prompt.
+    - Добавлены tests для timeout 2 минуты и маппинга `Yes/No/Timeout/None`.
+  - Финальный release hardening/review v2 закрыт:
+    - Review v2 не нашел критичных или важных блокеров.
+    - Найденный medium-risk `NU1902` по `SharpCompress 0.40.0` закрыт в `26b64b3 chore: update sharpcompress`.
+    - `SharpCompress` обновлен до `0.48.0`; код распаковки моделей и тестовая tar.bz2-утилита адаптированы к `OpenReader` / `OpenWriter`.
+    - Проверки: `dotnet list Autorecord.sln package --vulnerable --include-transitive` — уязвимых пакетов нет; `dotnet test Autorecord.sln --no-restore` — 336/336 passed; `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors; `scripts/publish.ps1` прошел; published smoke `--minimized` прошел.
+    - Worktree `.worktrees/mvp` чистый на ветке `feature/mvp`.
+  - Исправление длительности и системного звука записи закрыто в `d9957ee fix: keep recorder aligned with wall clock`:
+    - Root cause: writer писал фиксированными 20 ms итерациями с дополнительной задержкой цикла, поэтому на длинной записи MP3 мог быть короче реального времени.
+    - `NaudioWavRecorder` теперь выравнивает запись по wall-clock elapsed time и при Stop фиксирует final frame target по фактическому времени остановки.
+    - Перед закрытием WAV recorder останавливает WASAPI capture, получает хвостовые buffers и дописывает файл до final target, чтобы не терять конец.
+    - System loopback теперь создается для всех активных render devices, а не только для одного default endpoint; недоступный output endpoint пропускается без падения всей записи.
+    - Добавлены tests на расчёт due/final frames и ограничение samples-to-write.
+    - Проверки: `dotnet test Autorecord.sln --no-restore` — 339/339 passed; `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors; 30s audio smoke — MP3 30.072 sec с энергией в начале/середине/конце; 320s audio smoke — MP3 320.208 sec с энергией в начале/середине/конце; `scripts/publish.ps1` прошел; published smoke `--minimized` прошел.
+    - Актуальный publish: `.worktrees/mvp/artifacts/publish/Autorecord/Autorecord.App.exe`.
+  - Добавление Pyannote Community-1 выполнено в рабочем дереве, пока без checkpoint commit:
+    - В `models/catalog.json` добавлена diarization-модель `pyannote-community-1` / `Спикеры — Pyannote Community-1`.
+    - В истории заданий GUI добавлен столбец `Модель диаризации`; прежний столбец `Модель` переименован в `ASR-модель`.
+    - `ModelDownloadService` поддерживает Hugging Face snapshot download через явное GUI-скачивание; для gated модели показывается `HuggingFaceTokenDialog`, token используется только на время скачивания и не сохраняется.
+    - `ModelInstallService` умеет устанавливать directory artifact, чтобы локальный snapshot модели попадал в `%LOCALAPPDATA%\Autorecord\Models\pyannote-community-1`.
+    - `TranscriptionPipeline` теперь выбирает diarization engine по `engine` из catalog, как ASR engine; Pyannote не идет через старый sherpa-onnx engine.
+    - Добавлены `PyannoteCommunityWorkerClient`, `PyannoteCommunityDiarizationEngine`, `PyannoteCommunityWorkerLocator` и исходники `tools/pyannote-community-worker/`.
+    - Worker выставляет `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `HF_HUB_DISABLE_TELEMETRY=1`, `PYANNOTE_METRICS_ENABLED=false`; C# client также прокидывает эти переменные в process environment.
+    - Собран локальный artifact `.worktrees/mvp/artifacts/vendor/pyannote-community-worker/worker.exe`; `worker.exe --help` запускается.
+    - `scripts/publish.ps1` теперь требует и копирует Pyannote worker в `workers/pyannote-community` рядом с GigaAM worker.
+    - Проверки: `dotnet test Autorecord.sln` — 347/347 passed; альтернативный publish в `artifacts/publish/Autorecord-pyannote-check` прошел и содержит оба worker-а.
+  - Основной publish после Pyannote Community-1 повторен успешно:
+    - Пользователь закрыл запущенное приложение, после этого `scripts/publish.ps1` обновил `.worktrees/mvp/artifacts/publish/Autorecord/Autorecord.App.exe`.
+    - Publish output содержит `workers/gigaam/worker.exe`, `workers/pyannote-community/worker.exe` и catalog с `pyannote-community-1`.
+    - В корне проекта создан ярлык `C:\Projects\autorecord\Autorecord.lnk`; target: `.worktrees/mvp/artifacts/publish/Autorecord/Autorecord.App.exe`, working directory: `.worktrees/mvp/artifacts/publish/Autorecord`.
+  - Создана пользовательская инструкция по Hugging Face token для Pyannote Community-1:
+    - Файл: `docs/huggingface-token-pyannote.md`.
+    - Картинки: `docs/images/hf-token-step-1.svg` ... `hf-token-step-4.svg`.
+    - Инструкция фиксирует путь: открыть `https://huggingface.co/settings/tokens`, создать `Read` token, скопировать `hf_...`, вставить его в GUI-диалог скачивания модели.
+  - Pyannote Community-1 скачан и установлен через GUI:
+    - `%LOCALAPPDATA%\Autorecord\Models\pyannote-community-1` содержит `config.yaml`, `segmentation/pytorch_model.bin`, `embedding/pytorch_model.bin`, `plda/plda.npz`, `plda/xvec_transform.npz`.
+    - `manifest.json` видит `pyannote-community-1` как `Installed`.
+  - Исправлен UX скачивания моделей:
+    - Статус теперь показывает отдельно ASR и diarization: `ASR — Installed; диаризация — ...`.
+    - Ошибки скачивания выводятся под progress bar во вкладке `Транскрибация`, а не только в общем статусе.
+    - `HTTP 401/403` от Hugging Face маппится в понятное сообщение про token/access/read role.
+    - Проверки после UX-fix: targeted tests — 14/14 passed; полный `dotnet test Autorecord.sln --no-restore` — 349/349 passed; `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors.
+  - Исправлен runtime Pyannote Community-1 worker:
+    - Root cause: worker читал WAV через `torchaudio.load`, что на Windows потянуло `torchcodec/libtorchcodec` и FFmpeg runtime; приложение не должно требовать внешний FFmpeg/torchcodec для диаризации.
+    - `tools/pyannote-community-worker/worker.py` теперь читает normalized 16 kHz mono PCM WAV через стандартный Python `wave`, конвертирует в `torch.Tensor` и передает Pyannote in-memory.
+    - Из прямых зависимостей worker убран `torchaudio`; build script больше не делает `--collect-all torchaudio`.
+    - Добавлен regression test, запрещающий `import torchaudio` / `torchaudio.load` в worker source.
+    - Новый `artifacts/vendor/pyannote-community-worker/worker.exe` собран и проверен на установленной локальной модели: `EXIT=0`, output JSON с turns создан.
+    - Проверки после audio-fix: `dotnet test Autorecord.sln --no-restore` — 350/350 passed; `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors.
+    - Новая publish-папка: `.worktrees/mvp/artifacts/publish/Autorecord-pyannote-audio-fix/Autorecord.App.exe`.
+    - `C:\Projects\autorecord\Autorecord.lnk` переключен на `Autorecord-pyannote-audio-fix`.
+  - Исправлен ключевой дефект сопоставления ASR и диаризации:
+    - Root cause плохого разделения по спикерам: ASR транскрибировал весь файл крупными chunks по ~20 сек, а `TranscriptAssembler` назначал один speaker всему ASR chunk по максимальному overlap.
+    - Добавлен `ISegmentedTranscriptionEngine` и `TranscriptionEngineInterval`.
+    - При включенной диаризации `TranscriptionPipeline` передает ASR интервалы diarization turns; Sherpa и GigaAM транскрибируют именно эти интервалы, а не весь файл крупными чанками.
+    - `tools/gigaam-worker/worker.py` теперь принимает `--chunks-json`; bundled GigaAM worker пересобран.
+    - Ярлык `C:\Projects\autorecord\Autorecord.lnk` переключен на актуальный publish `.worktrees/mvp/artifacts/publish/Autorecord/Autorecord.App.exe`.
+    - Проверки: regression test сначала падал на full-file ASR call; затем targeted tests — 3/3 passed; полный `dotnet test Autorecord.sln --no-restore` — 353/353 passed; `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors; `scripts/publish.ps1` прошел; publish GigaAM worker показывает `--chunks-json` в help.
 - Ограничения:
-  - Реальная запись аудиоустройств не проверена вручную.
-  - Реальная iCal-ссылка требует повторной проверки после исправления ручного refresh.
-  - Автозапуск через Task Scheduler не проверен после входа в Windows.
-- С чего продолжать: перезапустить приложение, вставить актуальную iCal-ссылку, нажать `Обновить календарь`, затем сохранить настройки и проверить запись.
+  - Новый turn-aware ASR pipeline собран и протестирован unit/build/publish, но пользовательская GUI-проверка на проблемной 27-минутной реальной записи еще не выполнена.
+  - Перед ручной проверкой нужно закрыть любой старый Autorecord через tray `Выход` и запустить заново через `C:\Projects\autorecord\Autorecord.lnk`.
+  - `.worktrees/mvp` содержит незакоммиченные изменения Pyannote/UI/HF-download и turn-aware ASR pipeline.
+  - Исправление recorder timing/system-output проверено программными 30s/320s smoke, но еще полезна повторная пользовательская проверка на реальном разговоре с наушниками.
+  - Автозапуск через Task Scheduler не подтвержден: создание задачи блокируется `E_ACCESSDENIED` в текущей Windows-сессии; fallback через HKCU Run реализован и проверен через GUI.
+  - `GigaAM v3 + Спикеры — быстро` проверен через GUI на коротком тестовом WAV и на одной реальной записи с одним голосовым источником; turn-aware ASR после диаризации еще нужно проверить на реальном multi-speaker файле.
+  - Multi-speaker GUI path проверен на synthetic Windows TTS voices, но новая turn-aware логика еще не подтверждена пользователем на реальной встрече с несколькими людьми.
+  - Speaker reconciliation между diarization chunks эвристический: стабильность speaker labels зависит от наличия реального overlap в padding между соседними chunks.
+- С чего продолжать: закрыть старый Autorecord через tray `Выход`, запустить `C:\Projects\autorecord\Autorecord.lnk`, повторить транскрибацию проблемного файла и сравнить качество диаризации; при подтверждении сделать checkpoint commit.
+
+## Sync 2026-05-12
+
+- Актуальное состояние после релизного UX-упрощения v2:
+  - В `models/catalog.json` оставлены только `gigaam-v3-ru-quality` и `pyannote-community-1`.
+  - `TranscriptionSettings` по умолчанию использует GigaAM v3 + Pyannote Community-1, `EnableDiarization = true`, `AutoTranscribeAfterRecording = true`.
+  - Дефолтная папка новых записей: `Documents\Autorecord`; сохраненные пользовательские настройки папки не перетираются.
+  - Вкладка `Транскрибация` больше не дает выбирать ASR/diarization-модель; показывает статус фиксированной пары моделей, кнопки скачивания/удаления/проверки и текущую задачу.
+  - Блок статуса/управления моделями скрывается, если GigaAM v3 и Pyannote Community-1 уже `Installed`; при missing/downloading/error он остается доступным.
+  - История заданий скрыта и больше не используется как основной UX; приложение держит в UI только актуальную задачу и чистит очередь от старых нерелевантных задач.
+  - Добавлен `SpeakerCountDialog`: при остановке записи пользователь выбирает `Auto/1..6`; через 2 минуты без выбора используется `Auto`.
+  - Остановка записи не ждет 2 минуты и не продолжает писать звук из-за speaker prompt: запись сохраняется, а выбор спикеров применяется перед enqueue на транскрибацию.
+  - Ручной выбор существующего аудиофайла сохранен: файл отправляется на транскрибацию + диаризацию фиксированными моделями.
+- Проверено:
+  - Red tests сначала упали на старых дефолтах/лишних моделях.
+  - Targeted tests после фикса дефолтов/catalog прошли.
+  - `dotnet test Autorecord.sln --no-restore` — 355/355 passed.
+  - `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors.
+  - `scripts/publish.ps1` прошел после остановки запущенного `Autorecord.App` PID `39264`.
+  - После скрытия блока моделей: `dotnet test Autorecord.sln --no-restore` — 359/359 passed; `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors; `scripts/publish.ps1` прошел.
+  - `C:\Projects\autorecord\Autorecord.lnk` указывает на `.worktrees/mvp/artifacts/publish/Autorecord/Autorecord.App.exe`.
+- Ограничения:
+  - Изменения Pyannote/HF-download/turn-aware ASR/release UX пока остаются незакоммиченными в `.worktrees/mvp`.
+  - Нужна ручная GUI-проверка релизного сценария: запись -> prompt числа спикеров -> автотранскрибация -> файлы транскрипта с диаризацией.
+- С чего продолжать: запустить `C:\Projects\autorecord\Autorecord.lnk`, проверить новый релизный UX на реальной записи, затем сделать checkpoint commit.

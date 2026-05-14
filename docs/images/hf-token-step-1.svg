@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-label="Шаг 1: открыть страницу Hugging Face tokens">
+  <rect width="1200" height="720" fill="#f6f7f9"/>
+  <rect x="70" y="60" width="1060" height="600" rx="16" fill="#ffffff" stroke="#d7dce3"/>
+  <text x="100" y="115" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700" fill="#151b23">Шаг 1. Откройте страницу токенов</text>
+  <rect x="100" y="160" width="1000" height="58" rx="8" fill="#f1f3f5" stroke="#cfd6df"/>
+  <text x="128" y="198" font-family="Consolas, monospace" font-size="25" fill="#1f6feb">https://huggingface.co/settings/tokens</text>
+  <rect x="100" y="270" width="250" height="62" rx="8" fill="#fff7df" stroke="#f0c36d"/>
+  <text x="128" y="309" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#6f4e00">Account settings</text>
+  <rect x="390" y="270" width="270" height="62" rx="8" fill="#eaf3ff" stroke="#8ab6f9"/>
+  <text x="423" y="309" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700" fill="#0b57d0">Access Tokens</text>
+  <path d="M660 301 L760 301" stroke="#0b57d0" stroke-width="5" marker-end="url(#arrow)"/>
+  <rect x="780" y="250" width="300" height="102" rx="10" fill="#f7fbff" stroke="#8ab6f9" stroke-width="3"/>
+  <text x="810" y="292" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#0b57d0">Нужная страница</text>
+  <text x="810" y="326" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#57606a">создания токена</text>
+  <text x="100" y="430" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#24292f">Откройте ссылку в браузере и войдите в тот же аккаунт,</text>
+  <text x="100" y="466" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#24292f">где уже дали доступ к pyannote/speaker-diarization-community-1.</text>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#0b57d0"/>
+    </marker>
+  </defs>
+</svg>
