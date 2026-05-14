@@ -381,3 +381,60 @@
   - Изменения Pyannote/HF-download/turn-aware ASR/release UX пока остаются незакоммиченными в `.worktrees/mvp`.
   - Нужна ручная GUI-проверка релизного сценария: запись -> prompt числа спикеров -> автотранскрибация -> файлы транскрипта с диаризацией.
 - С чего продолжать: запустить `C:\Projects\autorecord\Autorecord.lnk`, проверить новый релизный UX на реальной записи, затем сделать checkpoint commit.
+
+## Sync 2026-05-14
+
+- Текущее состояние:
+  - Корневой git-репозиторий `C:\Projects\autorecord` на ветке `master`.
+  - Последний корневой commit: `a97cd2c initial stable version`.
+  - После commit рабочее дерево корневого репозитория было чистым.
+- Что изменено перед checkpoint:
+  - `.gitignore` расширен: игнорируются `.worktrees/`, .NET `bin/obj`, test/coverage output, publish/temp/artifacts, Python cache/venv/build/dist, `.env`/секреты, `*.lnk`, logs/tmp/editor noise.
+  - `docs/huggingface-token-pyannote.md` и `docs/images/hf-token-step-1.svg` ... `hf-token-step-4.svg` добавлены в git как пользовательская инструкция по Hugging Face token для Pyannote Community-1.
+  - Обновленные `context/` файлы вошли в checkpoint.
+- С чего продолжать:
+  - Запустить `C:\Projects\autorecord\Autorecord.lnk`, проверить релизный UX на реальной записи и после подтверждения сделать checkpoint изменений в `.worktrees/mvp`.
+
+## Sync 2026-05-14
+
+- Последнее изменение:
+  - В `.worktrees/mvp` recorder сохраняет отдельные технические WAV-дорожки рядом с итоговым MP3:
+    - `*.mic.wav` — микрофонные input sources;
+    - `*.system.wav` — системные render loopback sources;
+    - итоговый `*.mp3` остается combined mix.
+  - `AudioFileSavedEventArgs` передает optional пути `MicrophoneTrackPath` и `SystemTrackPath`.
+  - Транскрипционный pipeline пока не переключался на эти дорожки; автотранскрибация использует saved combined MP3 и текущую выбранную ASR-модель.
+- Проверка:
+  - `C:\Users\User\.dotnet\dotnet.exe test Autorecord.sln --no-restore` — 381 tests passed.
+  - Targeted `NaudioWavRecorderTests` — 21 tests passed.
+- Ограничение:
+  - `scripts\publish.ps1` в `.worktrees/mvp` заблокирован запущенным publish app:
+    - PID `21728`;
+    - `C:\Projects\autorecord\.worktrees\mvp\artifacts\publish\Autorecord\Autorecord.App.exe`.
+  - Процесс не закрывался принудительно, чтобы не оборвать возможную запись.
+- С чего продолжать:
+  - Закрыть запущенный Autorecord через tray/окно.
+  - Повторить `powershell -ExecutionPolicy Bypass -File scripts\publish.ps1` в `.worktrees/mvp`.
+  - Сделать короткую тестовую запись и проверить наличие `*.mp3`, `*.mic.wav`, `*.system.wav`.
+
+## Sync 2026-05-14
+
+- Текущее состояние после закрытия приложения:
+  - `scripts\publish.ps1` в `.worktrees/mvp` успешно пересобрал publish:
+    - `C:\Projects\autorecord\.worktrees\mvp\artifacts\publish\Autorecord\Autorecord.App.exe`;
+    - GigaAM worker и Pyannote Community worker скопированы в publish.
+  - `C:\Projects\autorecord\Autorecord.lnk` указывает на актуальный publish exe.
+  - Publish exe smoke-запущен с `--minimized`; процесс стартовал, затем был завершен после проверки.
+  - Installer пересобран на свежем publish:
+    - `C:\Projects\autorecord\.worktrees\mvp\artifacts\installer\Autorecord-Setup-WithModels.exe`;
+    - размер `886.9 MiB`;
+    - payload marker `AUTORECORD_PAYLOAD_V1` корректный;
+    - payload содержит app, workers и release-модели `gigaam-v3-ru-quality`, `pyannote-community-1`.
+  - `C:\Projects\autorecord\Autorecord-Setup-WithModels.lnk` указывает на актуальный setup exe.
+- Проверка:
+  - Targeted `NaudioWavRecorderTests` — 21/21 passed.
+  - Реальная запись из GUI не запускалась автоматически, чтобы не создавать пользовательскую аудиозапись без контроля.
+- С чего продолжать:
+  - Запустить `C:\Projects\autorecord\Autorecord.lnk`.
+  - Сделать короткую запись и проверить рядом с MP3 файлы `*.mic.wav` и `*.system.wav`.
+  - После этого проверить, что автотранскрибация идет по текущей выбранной ASR-модели.

@@ -56,6 +56,14 @@
   - Последние проверки: regression test на turn-aware ASR сначала падал на full-file ASR call; затем `dotnet test Autorecord.sln --no-restore` — 353/353 passed; `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors; `scripts/publish.ps1` прошел; publish GigaAM worker показывает `--chunks-json`.
   - Актуальная publish-папка: `.worktrees/mvp/artifacts/publish/Autorecord`.
 
+## Sync 2026-05-14
+
+- Архитектура записи в `.worktrees/mvp`:
+  - основной файл записи: combined MP3 `*.mp3`;
+  - техническая дорожка микрофона: `*.mic.wav`;
+  - техническая дорожка системного звука: `*.system.wav`;
+  - автотранскрибация пока использует основной combined MP3 и текущую выбранную ASR-модель.
+
 ## Sync 2026-05-12
 
 - Актуальная релизная конфигурация v2:
@@ -70,3 +78,17 @@
   - Worktree `.worktrees/mvp` содержит незакоммиченные изменения Pyannote Community-1 / HF-download / turn-aware ASR / release UX.
   - Последние проверки: `dotnet test Autorecord.sln --no-restore` — 359/359 passed; `dotnet build Autorecord.sln -c Release --no-restore` — 0 warnings, 0 errors; `scripts/publish.ps1` прошел.
   - `Autorecord.lnk` указывает на `.worktrees/mvp/artifacts/publish/Autorecord/Autorecord.App.exe`.
+
+## Sync 2026-05-14
+
+- Корневой репозиторий `C:\Projects\autorecord` находится на ветке `master`.
+- Текущий корневой checkpoint: `a97cd2c initial stable version`.
+- `.gitignore` настроен для локальных worktrees, .NET/Python build artifacts, publish/temp output, IDE/user state, секретов и `*.lnk`.
+- `Autorecord.lnk` и `.worktrees/` остаются локальными игнорируемыми артефактами; документация в `docs/` отслеживается git.
+
+## Sync 2026-05-14
+
+- Актуальные локальные артефакты `.worktrees/mvp`:
+  - publish exe: `C:\Projects\autorecord\.worktrees\mvp\artifacts\publish\Autorecord\Autorecord.App.exe`;
+  - setup exe: `C:\Projects\autorecord\.worktrees\mvp\artifacts\installer\Autorecord-Setup-WithModels.exe`;
+  - installer payload пересобран после добавления технических дорожек и проверен по marker/required entries.
