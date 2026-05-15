@@ -1,9 +1,10 @@
 # Проект
 
 - Название: autorecord.
-- Цель: Windows-приложение для автоматической записи микрофона и системного звука во время встреч из Яндекс.Календаря.
-- Стек: .NET WPF, NAudio, iCal-ссылка Яндекс.Календаря, Windows Task Scheduler с fallback через HKCU Run.
+- Цель: Windows-приложение для автоматической записи микрофона и системного звука во время встреч из календаря, который отдает события по iCal/.ics-ссылке.
+- Стек: .NET WPF, NAudio, Ical.Net, iCal/.ics-ссылка календаря, Windows Task Scheduler с fallback через HKCU Run.
 - Текущая структура:
+  - `README.md` — описание проекта для GitHub.
   - `context/` — проектный контекст.
   - `docs/superpowers/specs/2026-05-06-autorecord-design.md` — утвержденная дизайн-спека MVP.
   - `docs/huggingface-token-pyannote.md` — пользовательская инструкция с картинками по получению Hugging Face token для Pyannote Community-1.
