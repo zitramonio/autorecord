@@ -1,6 +1,6 @@
 param(
     [switch]$SkipPublish,
-    [string]$OutputName = "Autorecord-Setup-WithModels.exe"
+    [string]$OutputName = "Autorecord-Setup-NoModels.exe"
 )
 
 $ErrorActionPreference = "Stop"

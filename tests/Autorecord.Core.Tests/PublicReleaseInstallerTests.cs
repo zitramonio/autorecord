@@ -14,6 +14,7 @@ public sealed class PublicReleaseInstallerTests
         Assert.DoesNotContain("pytorch_model.bin", script, StringComparison.Ordinal);
         Assert.DoesNotContain("new ModelInfo(", source, StringComparison.Ordinal);
         Assert.Contains("GigaAM v3 не входит в установщик", source, StringComparison.Ordinal);
+        Assert.Contains("Autorecord-Setup-NoModels.exe", script, StringComparison.Ordinal);
     }
 
     [Fact]
