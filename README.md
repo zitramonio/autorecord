@@ -37,6 +37,19 @@ Autorecord - Windows-приложение для автоматической з
 - Pyannote Community-1 worker для локальной диаризации
 - xUnit-тесты для core-логики
 
+## Документация
+
+Документация проекта на GitHub:
+
+- [Контекст проекта](https://github.com/zitramonio/autorecord/blob/public-release/context/project.md)
+- [Дизайн MVP](https://github.com/zitramonio/autorecord/blob/public-release/docs/superpowers/specs/2026-05-06-autorecord-design.md)
+- [План реализации MVP](https://github.com/zitramonio/autorecord/blob/public-release/docs/superpowers/plans/2026-05-06-autorecord-mvp.md)
+- [Дизайн локальной транскрибации v2](https://github.com/zitramonio/autorecord/blob/public-release/docs/superpowers/specs/2026-05-07-autorecord-v2-transcription-design.md)
+- [План реализации локальной транскрибации v2](https://github.com/zitramonio/autorecord/blob/public-release/docs/superpowers/plans/2026-05-07-autorecord-v2-transcription.md)
+- [Дизайн установки моделей](https://github.com/zitramonio/autorecord/blob/public-release/docs/superpowers/specs/2026-05-08-model-install-flow-design.md)
+- [Инструкция по установке Pyannote Community-1](https://github.com/zitramonio/autorecord/blob/public-release/docs/huggingface-pyannote-install.md)
+
+
 ## Статус
 
 Autorecord находится в активной разработке. Реализованы запись встреч, safe-save MP3, локальная транскрибация и базовый релизный сценарий с GigaAM v3 + Pyannote Community-1. 
