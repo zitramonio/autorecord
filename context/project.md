@@ -1,10 +1,11 @@
 # Проект
 
 - Название: autorecord.
-- Цель: Windows-приложение для автоматической записи микрофона и системного звука во время встреч, с локальной транскрибацией и диаризацией.
-- Стек: .NET WPF, NAudio, iCal-ссылка Яндекс.Календаря, Windows Task Scheduler, GigaAM worker, Pyannote Community worker.
+- Цель: Windows-приложение для автоматической записи микрофона и системного звука во время встреч из календаря по iCal/.ics-ссылке, с локальной транскрибацией и диаризацией.
+- Стек: .NET WPF, NAudio, Ical.Net, iCal/.ics-ссылка календаря, Windows Task Scheduler, GigaAM worker, Pyannote Community worker.
 - Текущая структура:
   - `context/` — проектный контекст.
+  - `README.md` — описание проекта для GitHub.
   - `docs/superpowers/specs/2026-05-06-autorecord-design.md` — утвержденная дизайн-спека MVP.
   - `docs/superpowers/plans/2026-05-06-autorecord-mvp.md` — план реализации MVP.
   - `src/Autorecord.App/` — WPF UI, настройки, диалоги, запуск записи/транскрибации.

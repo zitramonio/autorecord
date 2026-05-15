@@ -1,12 +1,67 @@
+# Local git worktrees
 .worktrees/
-bin/
-obj/
+
+# .NET build output
+**/bin/
+**/obj/
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+coverage/
+
+# Visual Studio / Rider / user machine state
+.vs/
+.idea/
+*.user
+*.suo
+*.rsuser
+*.DotSettings.user
+launchSettings.json
+
+# Publish and generated artifacts
 artifacts/
+publish/
+out/
+tmp/
+temp/
+*.recording.wav
+
+# Python worker local state
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+**/build/
+**/dist/
 tools/gigaam-worker/.venv/
 tools/gigaam-worker/build/
 tools/gigaam-worker/*.spec
 tools/pyannote-community-worker/.venv/
 tools/pyannote-community-worker/build/
 tools/pyannote-community-worker/*.spec
+
+# Secrets and local overrides
+.env
+.env.*
+!.env.example
+*.secret
+*.secrets
+secrets.json
+appsettings.Local.json
+appsettings.Development.json
+
+# OS and editor noise
+Thumbs.db
+Desktop.ini
+*.lnk
+*.log
+*.tmp
+*.bak
+*.swp

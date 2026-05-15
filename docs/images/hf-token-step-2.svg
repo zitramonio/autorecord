@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-label="Шаг 2: нажать Create new token">
+  <rect width="1200" height="720" fill="#f6f7f9"/>
+  <rect x="70" y="60" width="1060" height="600" rx="16" fill="#ffffff" stroke="#d7dce3"/>
+  <text x="100" y="115" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700" fill="#151b23">Шаг 2. Создайте новый токен</text>
+  <rect x="100" y="160" width="1000" height="390" rx="10" fill="#fbfcfe" stroke="#d7dce3"/>
+  <text x="132" y="214" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="700" fill="#24292f">User access tokens</text>
+  <rect x="820" y="180" width="230" height="56" rx="9" fill="#111827"/>
+  <text x="860" y="216" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700" fill="#ffffff">Create new token</text>
+  <path d="M935 250 L935 340" stroke="#d1242f" stroke-width="6" marker-end="url(#arrow)"/>
+  <rect x="660" y="356" width="390" height="92" rx="12" fill="#fff0f0" stroke="#d1242f" stroke-width="3"/>
+  <text x="690" y="393" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700" fill="#d1242f">Нажмите эту кнопку</text>
+  <text x="690" y="427" font-family="Segoe UI, Arial, sans-serif" font-size="21" fill="#57606a">иногда называется New token</text>
+  <line x1="132" y1="270" x2="720" y2="270" stroke="#d7dce3" stroke-width="2"/>
+  <line x1="132" y1="330" x2="720" y2="330" stroke="#d7dce3" stroke-width="2"/>
+  <line x1="132" y1="390" x2="720" y2="390" stroke="#d7dce3" stroke-width="2"/>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#d1242f"/>
+    </marker>
+  </defs>
+</svg>
