@@ -3,14 +3,17 @@ namespace Autorecord.Core.Tests;
 public sealed class PublicReleaseInstallerTests
 {
     [Fact]
-    public void PackageInstallerBundlesGigaAmButNotPyannote()
+    public void PackageInstallerDoesNotBundleTranscriptionModels()
     {
         var repositoryRoot = FindRepositoryRoot();
         var script = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "package-installer.ps1"));
+        var source = File.ReadAllText(Path.Combine(repositoryRoot, "tools", "installer", "AutorecordInstaller.cs"));
 
-        Assert.Contains("gigaam-v3-ru-quality", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("gigaam-v3-ru-quality", script, StringComparison.Ordinal);
         Assert.DoesNotContain("pyannote-community-1", script, StringComparison.Ordinal);
         Assert.DoesNotContain("pytorch_model.bin", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("new ModelInfo(", source, StringComparison.Ordinal);
+        Assert.Contains("GigaAM v3 не входит в установщик", source, StringComparison.Ordinal);
     }
 
     [Fact]

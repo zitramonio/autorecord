@@ -136,4 +136,49 @@
   - Fresh publish пересобран.
   - Собран новый единый setup: `C:\Projects\autorecord\.worktrees\mvp\artifacts\installer\Autorecord-Setup-WithModels-AboutContact.exe`.
   - `C:\Projects\autorecord\Autorecord-Public-Setup.lnk` переключён на AboutContact setup.
-- Следующий шаг: установить через `Autorecord-Public-Setup.lnk`, проверить стартовый размер окна, scroll вкладки `Запись`, нижнюю строку email на вкладке `О программе`, затем проверить неверный Hugging Face token и скачать `pyannote-community-1` с корректным token.
+- Выполнено:
+  - Ветка `master` слита в `public-release`.
+  - Документальные изменения `master` сохранены отдельным commit `ffffa34 docs: add public README`.
+  - Merge commit в основной ветке: `7325751 Merge branch 'master' into public-release`.
+  - После merge `C:\Users\User\.dotnet\dotnet.exe test Autorecord.sln --no-restore` — 398/398 passed.
+  - Основная ветка для дальнейшей работы: `public-release` в `C:\Projects\autorecord\.worktrees\mvp`.
+- Выполнено:
+  - GigaAM v3 убрана из installer payload; теперь обе модели пользователь скачивает после установки.
+  - Добавлено first-run окно установки моделей с отдельными кнопками GigaAM/Pyannote и кнопкой `Позже`.
+  - При отказе от first-run окна приложение сообщает, что транскрибация производиться не будет, пока модели не установлены.
+  - Вкладка `Транскрибация` показывает кнопку `Скачать недостающие модели`, если отсутствует ASR или diarization model.
+  - Собран no-bundled-models installer: `C:\Projects\autorecord\.worktrees\mvp\artifacts\installer\Autorecord-Setup-NoBundledModels.exe`, размер `461.2 MiB`.
+  - `C:\Projects\autorecord\Autorecord-Public-Setup.lnk` переключён на новый installer.
+  - Полная проверка после no-bundled-models: `C:\Users\User\.dotnet\dotnet.exe test Autorecord.sln --no-restore` — 400/400 passed.
+- Выполнено:
+  - Warning-строка со вкладки `Транскрибация` убрана.
+  - После `Позже` показывается отдельный modal warning dialog с кнопкой `Ок`.
+  - На вкладке `Транскрибация` теперь две отдельные кнопки скачивания:
+    - `Скачать модель транскрибации`;
+    - `Скачать модель разделения на спикеров`.
+  - Каждая кнопка скачивает только свою модель и скрывается после установки.
+  - Собран новый no-bundled-models installer: `C:\Projects\autorecord\.worktrees\mvp\artifacts\installer\Autorecord-Setup-NoBundledModels-TwoButtons.exe`, размер `461.2 MiB`.
+  - `C:\Projects\autorecord\Autorecord-Public-Setup.lnk` переключён на TwoButtons setup.
+  - Полная проверка после правки двух кнопок: `C:\Users\User\.dotnet\dotnet.exe test Autorecord.sln --no-restore` — 401/401 passed.
+- Выполнено:
+  - Если GigaAM v3 установлена, а `pyannote-community-1` не установлена, транскрибация запускается без диаризации вместо ожидания модели.
+  - Если GigaAM v3 не установлена, запуск транскрибации блокируется modal warning `Для транскрибации нужно скачать модель транскрибации.`
+  - Выбор количества спикеров не запрашивается, когда диаризация отключена из-за отсутствующей модели.
+  - Текущая транскрибация без diarization model отображается в UI.
+  - Fresh publish и public installer пересобраны: `C:\Projects\autorecord\.worktrees\mvp\artifacts\installer\Autorecord-Setup-WithModels.exe`.
+  - Полная проверка после фикса partial models: `C:\Users\User\.dotnet\dotnet.exe test Autorecord.sln` — 405/405 passed.
+- Выполнено:
+  - В режиме без диаризации экспорт больше не размечает весь текст как `Speaker 1`.
+  - `TXT` сохраняется единым текстом без таймкодов/speaker labels.
+  - `Markdown` сохраняет обычный текст без speaker-блоков.
+  - `SRT` сохраняет таймкоды, но без префикса `Speaker 1:`.
+  - Добавлен regression test на plain export без диаризации.
+  - Fresh publish и public installer пересобраны: `C:\Projects\autorecord\.worktrees\mvp\artifacts\installer\Autorecord-Setup-WithModels.exe`.
+  - Полная проверка после фикса экспорта без диаризации: `C:\Users\User\.dotnet\dotnet.exe test Autorecord.sln` — 406/406 passed.
+- Выполнено:
+  - Карточка текущей транскрибации больше не показывает этап `Диаризация`, если job создан без `DiarizationModelId`.
+  - Для job без диаризации отображаются этапы `Чтение файла`, `Транскрибация`, `Сохранение транскрипта`.
+  - Добавлен regression test на stage list без диаризации.
+  - Fresh publish и public installer пересобраны: `C:\Projects\autorecord\.worktrees\mvp\artifacts\installer\Autorecord-Setup-WithModels.exe`.
+  - Полная проверка после UI-фикса этапов: `C:\Users\User\.dotnet\dotnet.exe test Autorecord.sln` — 407/407 passed.
+- Следующий шаг: установить через `Autorecord-Public-Setup.lnk`, проверить first-run `Позже` -> modal warning, две отдельные кнопки скачивания, сценарий `только GigaAM` -> транскрибация единым текстом без `Speaker 1` и без этапа `Диаризация`, и сценарий `только Pyannote` -> modal warning о необходимости скачать модель транскрибации.

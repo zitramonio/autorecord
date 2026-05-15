@@ -190,6 +190,12 @@ public sealed class TranscriptExporter
             return builder.ToString();
         }
 
+        if (!HasDiarization(document))
+        {
+            builder.AppendLine(BuildPlainTranscriptText(document.Segments));
+            return builder.ToString();
+        }
+
         foreach (var segment in document.Segments)
         {
             builder.Append('[')
@@ -236,6 +242,12 @@ public sealed class TranscriptExporter
             return builder.ToString();
         }
 
+        if (!HasDiarization(document))
+        {
+            builder.AppendLine(BuildPlainTranscriptText(document.Segments));
+            return builder.ToString();
+        }
+
         foreach (var segment in document.Segments)
         {
             builder.AppendLine(
@@ -252,6 +264,7 @@ public sealed class TranscriptExporter
     private static string BuildSrt(TranscriptDocument document)
     {
         var builder = new StringBuilder();
+        var includeSpeakerLabels = HasDiarization(document);
         for (var index = 0; index < document.Segments.Count; index++)
         {
             var segment = document.Segments[index];
@@ -259,13 +272,28 @@ public sealed class TranscriptExporter
             builder.Append(FormatSrtTimestamp(segment.Start))
                 .Append(" --> ")
                 .AppendLine(FormatSrtTimestamp(segment.End));
-            builder.Append(segment.SpeakerLabel)
-                .Append(": ")
-                .AppendLine(segment.Text);
+            if (includeSpeakerLabels)
+            {
+                builder.Append(segment.SpeakerLabel)
+                    .Append(": ");
+            }
+
+            builder.AppendLine(segment.Text);
             builder.AppendLine();
         }
 
         return builder.ToString();
+    }
+
+    private static bool HasDiarization(TranscriptDocument document)
+    {
+        return !string.IsNullOrWhiteSpace(document.DiarizationModelId)
+            || document.RawDiarizationSegments.Count > 0;
+    }
+
+    private static string BuildPlainTranscriptText(IReadOnlyList<TranscriptSegment> segments)
+    {
+        return string.Join(" ", segments.Select(segment => segment.Text.Trim()));
     }
 
     private static async Task WriteFileAsync(

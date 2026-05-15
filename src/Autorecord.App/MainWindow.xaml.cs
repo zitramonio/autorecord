@@ -30,6 +30,8 @@ public partial class MainWindow : Window
     public event EventHandler<AppSettings>? ManualRecordingStartRequested;
     public event EventHandler? ManualRecordingStopRequested;
     public event EventHandler? DownloadSelectedModelRequested;
+    public event EventHandler? DownloadAsrModelRequested;
+    public event EventHandler? DownloadDiarizationModelRequested;
     public event EventHandler? CancelModelDownloadRequested;
     public event EventHandler? DeleteSelectedModelRequested;
     public event EventHandler? ValidateSelectedModelRequested;
@@ -113,7 +115,8 @@ public partial class MainWindow : Window
     public void SetModelDownloadBusy(bool isDownloading)
     {
         _isModelDownloadBusy = isDownloading;
-        DownloadModelButton.IsEnabled = !isDownloading;
+        DownloadAsrModelButton.IsEnabled = !isDownloading;
+        DownloadDiarizationModelButton.IsEnabled = !isDownloading;
         CancelDownloadModelButton.IsEnabled = isDownloading;
         DeleteModelButton.IsEnabled = !isDownloading;
         ValidateModelButton.IsEnabled = !isDownloading;
@@ -251,6 +254,16 @@ public partial class MainWindow : Window
     private void DownloadModel_Click(object sender, RoutedEventArgs e)
     {
         DownloadSelectedModelRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void DownloadAsrModel_Click(object sender, RoutedEventArgs e)
+    {
+        DownloadAsrModelRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void DownloadDiarizationModel_Click(object sender, RoutedEventArgs e)
+    {
+        DownloadDiarizationModelRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private void CancelDownloadModel_Click(object sender, RoutedEventArgs e)
@@ -589,7 +602,12 @@ public partial class MainWindow : Window
             : Visibility.Collapsed;
         ModelStatusPanel.Visibility = Visibility.Visible;
         ModelActionsPanel.Visibility = visibility;
-        DownloadModelButton.Visibility = MainWindowTranscriptionSettings.ShouldShowSpeakerModelDownload(
+        DownloadAsrModelButton.Visibility = MainWindowTranscriptionSettings.ShouldShowAsrModelDownloadButton(
+            AsrModelBox.SelectedItem as ModelListItemViewModel,
+            _isModelDownloadBusy)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        DownloadDiarizationModelButton.Visibility = MainWindowTranscriptionSettings.ShouldShowDiarizationModelDownloadButton(
             DiarizationModelBox.SelectedItem as ModelListItemViewModel,
             _isModelDownloadBusy)
             ? Visibility.Visible
@@ -640,6 +658,10 @@ public partial class MainWindow : Window
 
 public static class MainWindowTranscriptionSettings
 {
+    public sealed record PreparedForInstalledModels(
+        bool CanTranscribe,
+        TranscriptionSettings Settings);
+
     public static (bool EnableDiarization, string SelectedDiarizationModelId) ResolveDiarizationSelection(
         string? selectedDiarizationModelId,
         TranscriptionSettings currentSettings)
@@ -718,6 +740,60 @@ public static class MainWindowTranscriptionSettings
         bool isDownloading)
     {
         return !isDownloading && !IsInstalled(diarizationModel);
+    }
+
+    public static bool ShouldShowAsrModelDownloadButton(
+        ModelListItemViewModel? asrModel,
+        bool isDownloading)
+    {
+        return !isDownloading && !IsInstalled(asrModel);
+    }
+
+    public static bool ShouldShowDiarizationModelDownloadButton(
+        ModelListItemViewModel? diarizationModel,
+        bool isDownloading)
+    {
+        return !isDownloading && !IsInstalled(diarizationModel);
+    }
+
+    public static PreparedForInstalledModels PrepareForInstalledModels(
+        TranscriptionSettings settings,
+        bool isAsrInstalled,
+        bool isDiarizationInstalled)
+    {
+        if (!isAsrInstalled)
+        {
+            return new PreparedForInstalledModels(false, settings);
+        }
+
+        if (!settings.EnableDiarization || isDiarizationInstalled)
+        {
+            return new PreparedForInstalledModels(true, settings);
+        }
+
+        return new PreparedForInstalledModels(
+            true,
+            settings with
+            {
+                EnableDiarization = false,
+                NumSpeakers = null
+            });
+    }
+
+    public static TranscriptionSettings PreparePipelineSettingsForJob(
+        TranscriptionSettings currentSettings,
+        string asrModelId,
+        string? diarizationModelId)
+    {
+        return currentSettings with
+        {
+            SelectedAsrModelId = asrModelId,
+            EnableDiarization = !string.IsNullOrWhiteSpace(diarizationModelId),
+            SelectedDiarizationModelId = diarizationModelId ?? "",
+            NumSpeakers = string.IsNullOrWhiteSpace(diarizationModelId)
+                ? null
+                : currentSettings.NumSpeakers
+        };
     }
 
     private static bool IsInstalled(ModelListItemViewModel? model)

@@ -15,10 +15,7 @@ using System.Windows.Forms;
 internal static class AutorecordInstaller
 {
     private static readonly byte[] PayloadMarker = Encoding.ASCII.GetBytes("AUTORECORD_PAYLOAD_V1");
-    private static readonly ModelInfo[] ReleaseModels =
-    {
-        new ModelInfo("gigaam-v3-ru-quality", "GigaAM v3", "gigaam-v3", "v3")
-    };
+    private static readonly ModelInfo[] ReleaseModels = new ModelInfo[0];
     private const string InstallRootArgument = "--install-root";
 
     [STAThread]
@@ -215,7 +212,7 @@ Autorecord предназначен для локальной записи, тр
 
 3. Модели и лицензии
 
-GigaAM v3 распространяется по лицензии MIT License.
+GigaAM v3 не входит в установщик и скачивается пользователем после установки. Модель распространяется по лицензии MIT License.
 Источник: https://github.com/salute-developers/GigaAM
 
 Pyannote Community-1 распространяется по лицензии CC BY 4.0. Модель не входит в установщик и скачивается пользователем с Hugging Face после принятия условий доступа.

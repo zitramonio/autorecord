@@ -61,7 +61,16 @@ public sealed record TranscriptionJobListItemViewModel
 
     private static string FormatStageLines(TranscriptionJob job)
     {
-        var currentStage = GetStageIndex(job.ProgressPercent);
+        var hasDiarization = !string.IsNullOrWhiteSpace(job.DiarizationModelId);
+        var currentStage = GetStageIndex(job.ProgressPercent, hasDiarization);
+        if (!hasDiarization)
+        {
+            return string.Join(Environment.NewLine,
+                FormatStage("Чтение файла", stageIndex: 0, currentStage, job.Status),
+                FormatStage("Транскрибация", stageIndex: 1, currentStage, job.Status),
+                FormatStage("Сохранение транскрипта", stageIndex: 2, currentStage, job.Status));
+        }
+
         return string.Join(Environment.NewLine,
             FormatStage("Чтение файла", stageIndex: 0, currentStage, job.Status),
             FormatStage("Диаризация", stageIndex: 1, currentStage, job.Status),
@@ -108,9 +117,20 @@ public sealed record TranscriptionJobListItemViewModel
         return stageIndex == currentStage ? currentState : "ожидает";
     }
 
-    private static int GetStageIndex(int progressPercent)
+    private static int GetStageIndex(int progressPercent, bool hasDiarization)
     {
-        return Math.Clamp(progressPercent, 0, 100) switch
+        var clamped = Math.Clamp(progressPercent, 0, 100);
+        if (!hasDiarization)
+        {
+            return clamped switch
+            {
+                < 10 => 0,
+                < 95 => 1,
+                _ => 2
+            };
+        }
+
+        return clamped switch
         {
             < 10 => 0,
             < 45 => 1,

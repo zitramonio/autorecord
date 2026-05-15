@@ -129,6 +129,27 @@ public sealed class TranscriptionJobListItemViewModelTests
     }
 
     [Fact]
+    public void FromJobSkipsDiarizationStageWhenJobHasNoDiarizationModel()
+    {
+        var item = TranscriptionJobListItemViewModel.FromJob(new TranscriptionJob
+        {
+            Id = Guid.Parse("88888888-8888-8888-8888-888888888888"),
+            InputFilePath = "C:\\Records\\meeting.wav",
+            OutputDirectory = "C:\\Transcripts",
+            AsrModelId = "gigaam-v3-ru-quality",
+            DiarizationModelId = null,
+            Status = TranscriptionJobStatus.Running,
+            ProgressPercent = 10,
+            CreatedAt = DateTimeOffset.Parse("2026-05-07T10:00:00+03:00")
+        });
+
+        Assert.Contains("Чтение файла: готово", item.StageLines, StringComparison.Ordinal);
+        Assert.DoesNotContain("Диаризация", item.StageLines, StringComparison.Ordinal);
+        Assert.Contains("Транскрибация: выполняется", item.StageLines, StringComparison.Ordinal);
+        Assert.Contains("Сохранение транскрипта: ожидает", item.StageLines, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void FromJobShowsFailedStageFromProgress()
     {
         var item = TranscriptionJobListItemViewModel.FromJob(new TranscriptionJob

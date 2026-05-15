@@ -205,6 +205,44 @@ public sealed class TranscriptExporterTests
     }
 
     [Fact]
+    public async Task ExportAsyncWritesPlainTextWithoutSpeakerLabelsWhenDiarizationIsDisabled()
+    {
+        var outputDirectory = CreateTempDirectory();
+        var exporter = new TranscriptExporter();
+        var document = CreateDocument() with
+        {
+            DiarizationModelId = null,
+            DiarizationModelDisplayName = null,
+            Speakers = [],
+            Segments =
+            [
+                new TranscriptSegment(1, 1.2, 2.0, "SPEAKER_00", "Speaker 1", "Первая фраза.", 0.95),
+                new TranscriptSegment(2, 2.1, 3.0, "SPEAKER_00", "Speaker 1", "Вторая фраза.", 0.94)
+            ],
+            RawDiarizationSegments = []
+        };
+
+        var outputFiles = await exporter.ExportAsync(
+            document,
+            outputDirectory,
+            [TranscriptOutputFormat.Txt, TranscriptOutputFormat.Markdown, TranscriptOutputFormat.Srt],
+            overwrite: false,
+            CancellationToken.None);
+
+        var txt = await File.ReadAllTextAsync(outputFiles.TxtPath!);
+        Assert.Equal("Первая фраза. Вторая фраза.\r\n", txt);
+
+        var md = await File.ReadAllTextAsync(outputFiles.MarkdownPath!);
+        Assert.Contains("Первая фраза. Вторая фраза.", md);
+        Assert.DoesNotContain("Speaker 1", md, StringComparison.Ordinal);
+        Assert.DoesNotContain("**[", md, StringComparison.Ordinal);
+
+        var srt = await File.ReadAllTextAsync(outputFiles.SrtPath!);
+        Assert.Contains("00:00:01,200 --> 00:00:02,000\r\nПервая фраза.", srt);
+        Assert.DoesNotContain("Speaker 1:", srt, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ExportAsyncRejectsEmptyFormats()
     {
         var exporter = new TranscriptExporter();

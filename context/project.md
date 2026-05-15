@@ -3,6 +3,8 @@
 - Название: autorecord.
 - Цель: Windows-приложение для автоматической записи микрофона и системного звука во время встреч из календаря по iCal/.ics-ссылке, с локальной транскрибацией и диаризацией.
 - Стек: .NET WPF, NAudio, Ical.Net, iCal/.ics-ссылка календаря, Windows Task Scheduler, GigaAM worker, Pyannote Community worker.
+- Основная ветка: `public-release`.
+- Рабочая папка основной ветки: `C:\Projects\autorecord\.worktrees\mvp`.
 - Текущая структура:
   - `context/` — проектный контекст.
   - `README.md` — описание проекта для GitHub.
@@ -16,7 +18,7 @@
   - `tools/gigaam-worker/` — локальный worker для GigaAM.
   - `tools/pyannote-community-worker/` — локальный worker для Pyannote Community-1.
   - `tools/installer/` — source самораспаковывающегося installer stub.
-  - `scripts/package-installer.ps1` — сборка installer с текущим publish и bundled GigaAM.
+  - `scripts/package-installer.ps1` — сборка installer с текущим publish без bundled моделей.
 - Запуск:
   - основной ярлык: `C:\Projects\autorecord\Autorecord.lnk`.
   - publish exe: `C:\Projects\autorecord\.worktrees\mvp\artifacts\publish\Autorecord\Autorecord.App.exe`.
@@ -26,18 +28,28 @@
   - техническая дорожка системного звука: `*.system.wav`;
   - автотранскрибация пока использует основной combined MP3 и публичную ASR-модель `GigaAM v3`.
 - Installer:
-  - setup exe: `C:\Projects\autorecord\.worktrees\mvp\artifacts\installer\Autorecord-Setup-WithModels-AboutContact.exe`.
-  - public setup shortcut: `C:\Projects\autorecord\Autorecord-Public-Setup.lnk` points to AboutContact setup.
-  - включает модель `gigaam-v3-ru-quality` (`GigaAM v3`).
-  - не включает `pyannote-community-1`: пользователь скачивает модель диаризации из Hugging Face по token после принятия условий доступа.
+  - setup exe: `C:\Projects\autorecord\.worktrees\mvp\artifacts\installer\Autorecord-Setup-WithModels.exe`.
+  - public setup shortcut: `C:\Projects\autorecord\Autorecord-Public-Setup.lnk` points to the current setup.
+  - не включает модели: `gigaam-v3-ru-quality` и `pyannote-community-1` скачиваются пользователем после установки.
   - WinForms wizard без console window: лицензия, папка установки, progress, финальный экран с `Открыть Autorecord`.
-  - self-contained one-file `.exe`; startup can take several seconds because bundled model payload is embedded.
+  - self-contained one-file `.exe`; текущий размер около `461.2 MiB`.
   - при выборе `C:\Program Files` сразу показывает `C:\Program Files\Autorecord`, устанавливает туда и запрашивает UAC для защищённых путей.
-  - актуальный setup пересобран после UX-правок; payload проверен на отсутствие Parakeet и `pyannote-community-1`.
+  - актуальный setup пересобран после удаления bundled GigaAM; `artifacts\installer\staging\models` пустой.
 - Модели:
-  - ASR по умолчанию: `gigaam-v3-ru-quality` (`GigaAM v3`).
+  - ASR по умолчанию: `gigaam-v3-ru-quality` (`GigaAM v3`), скачивается пользователем после установки.
   - Диаризация: `pyannote-community-1`, скачивается пользователем через Hugging Face.
   - Parakeet убран из публичного каталога и не предлагается пользователю.
+- Поведение транскрибации при отсутствующих моделях:
+  - без GigaAM v3 транскрибация не запускается и показывает modal warning `Для транскрибации нужно скачать модель транскрибации.`;
+  - без `pyannote-community-1` транскрибация запускается без разделения на спикеров;
+  - выбор количества спикеров показывается только когда диаризация реально доступна;
+  - экспорт без диаризации не показывает искусственного `Speaker 1`: `TXT` и `Markdown` выводят обычный текст, `SRT` оставляет таймкоды без speaker prefix;
+  - карточка текущей транскрибации для job без `DiarizationModelId` не показывает этап `Диаризация`.
+- First-run UX:
+  - при первом запуске без установленных моделей показывается окно с кнопками скачивания GigaAM v3 и Pyannote Community-1;
+  - если пользователь выбирает `Позже`, приложение показывает отдельный warning dialog с кнопкой `Ок`;
+  - вкладка `Транскрибация` не показывает warning-строку;
+  - на вкладке `Транскрибация` есть две отдельные кнопки: `Скачать модель транскрибации` и `Скачать модель разделения на спикеров`.
 - Главный экран:
   - стартовый размер окна `760x720`, минимальный размер `640x520`, окно можно уменьшать/увеличивать;
   - вкладка `Запись` имеет вертикальный scroll для маленького размера окна;

@@ -19,12 +19,7 @@ $appIcon = Join-Path $root "src\Autorecord.App\Assets\AppIcon.ico"
 $localModelsRoot = Join-Path $env:LOCALAPPDATA "Autorecord\Models"
 $payloadMarker = [System.Text.Encoding]::ASCII.GetBytes("AUTORECORD_PAYLOAD_V1")
 
-$releaseModels = @(
-    @{
-        Id = "gigaam-v3-ru-quality"
-        RequiredFiles = @("v3_e2e_rnnt.ckpt", "v3_e2e_rnnt_tokenizer.model")
-    }
-)
+$releaseModels = @()
 
 function Assert-DirectoryExists([string]$Path, [string]$Description) {
     if (!(Test-Path -LiteralPath $Path -PathType Container)) {

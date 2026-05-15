@@ -1,0 +1,78 @@
+<Window x:Class="Autorecord.App.Dialogs.InitialModelSetupDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Модели транскрибации"
+        Width="520"
+        Height="330"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="Для локальной транскрибации нужно скачать модели"
+                   FontSize="16"
+                   FontWeight="SemiBold" />
+        <TextBlock Grid.Row="1"
+                   Margin="0,8,0,16"
+                   Text="Запись встреч будет работать сразу. Транскрибация производиться не будет, пока не установлены модели. Скачать их позже можно на вкладке &quot;Транскрибация&quot;."
+                   TextWrapping="Wrap" />
+
+        <StackPanel Grid.Row="2">
+            <Border Padding="10"
+                    BorderBrush="#CCCCCC"
+                    BorderThickness="1">
+                <DockPanel LastChildFill="True">
+                    <Button x:Name="DownloadAsrButton"
+                            DockPanel.Dock="Right"
+                            Width="240"
+                            Margin="12,0,0,0"
+                            Click="DownloadAsr_Click">
+                        Скачать модель транскрибации
+                    </Button>
+                    <StackPanel>
+                        <TextBlock Text="GigaAM v3"
+                                   FontWeight="SemiBold" />
+                        <TextBlock Text="Нужна для превращения аудио в текст."
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
+            <Border Margin="0,10,0,0"
+                    Padding="10"
+                    BorderBrush="#CCCCCC"
+                    BorderThickness="1">
+                <DockPanel LastChildFill="True">
+                    <Button x:Name="DownloadDiarizationButton"
+                            DockPanel.Dock="Right"
+                            Width="240"
+                            Margin="12,0,0,0"
+                            Click="DownloadDiarization_Click">
+                        Скачать модель разделения на спикеров
+                    </Button>
+                    <StackPanel>
+                        <TextBlock Text="Pyannote Community-1"
+                                   FontWeight="SemiBold" />
+                        <TextBlock Text="Нужна, чтобы разделять реплики по участникам."
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+        </StackPanel>
+
+        <StackPanel Grid.Row="3"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right">
+            <Button Width="110"
+                    IsCancel="True"
+                    Click="Cancel_Click">
+                Позже
+            </Button>
+        </StackPanel>
+    </Grid>
+</Window>

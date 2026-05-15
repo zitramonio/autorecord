@@ -32,6 +32,7 @@ public static class AutorecordDefaults
 public sealed record TranscriptionSettings
 {
     public bool AutoTranscribeAfterRecording { get; init; } = true;
+    public bool InitialModelSetupPromptDismissed { get; init; }
     public string SelectedAsrModelId { get; init; } = AutorecordDefaults.AsrModelId;
     public string SelectedDiarizationModelId { get; init; } = AutorecordDefaults.DiarizationModelId;
     public TranscriptOutputFolderMode OutputFolderMode { get; init; } = TranscriptOutputFolderMode.SameAsRecording;
@@ -51,6 +52,7 @@ public sealed record TranscriptionSettings
     {
         return other is not null
             && AutoTranscribeAfterRecording == other.AutoTranscribeAfterRecording
+            && InitialModelSetupPromptDismissed == other.InitialModelSetupPromptDismissed
             && SelectedAsrModelId == other.SelectedAsrModelId
             && SelectedDiarizationModelId == other.SelectedDiarizationModelId
             && OutputFolderMode == other.OutputFolderMode
@@ -67,6 +69,7 @@ public sealed record TranscriptionSettings
     {
         var hash = new HashCode();
         hash.Add(AutoTranscribeAfterRecording);
+        hash.Add(InitialModelSetupPromptDismissed);
         hash.Add(SelectedAsrModelId);
         hash.Add(SelectedDiarizationModelId);
         hash.Add(OutputFolderMode);

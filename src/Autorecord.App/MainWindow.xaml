@@ -201,11 +201,17 @@
                 <WrapPanel x:Name="ModelActionsPanel"
                            Grid.Row="1"
                            Margin="0,12,0,12">
-                    <Button x:Name="DownloadModelButton"
-                            Width="260"
+                    <Button x:Name="DownloadAsrModelButton"
+                            Width="230"
                             Margin="0,0,8,8"
-                            Click="DownloadModel_Click">
-                        Скачать модель для разделения на спикеров
+                            Click="DownloadAsrModel_Click">
+                        Скачать модель транскрибации
+                    </Button>
+                    <Button x:Name="DownloadDiarizationModelButton"
+                            Width="250"
+                            Margin="0,0,8,8"
+                            Click="DownloadDiarizationModel_Click">
+                        Скачать модель разделения на спикеров
                     </Button>
                     <Button x:Name="DeleteModelButton"
                             Visibility="Collapsed"

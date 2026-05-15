@@ -252,13 +252,99 @@ public sealed class MainWindowTranscriptionSettingsTests
     }
 
     [Fact]
-    public void SpeakerModelDownloadButtonTextIsPublicReleaseSpecific()
+    public void ModelDownloadButtonsAreSeparateForAsrAndDiarization()
     {
         var repositoryRoot = FindRepositoryRoot();
         var xaml = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Autorecord.App", "MainWindow.xaml"));
+        var codeBehind = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Autorecord.App", "MainWindow.xaml.cs"));
 
-        Assert.Contains("Скачать модель для разделения на спикеров", xaml, StringComparison.Ordinal);
+        Assert.Contains("DownloadAsrModelButton", xaml, StringComparison.Ordinal);
+        Assert.Contains("Скачать модель транскрибации", xaml, StringComparison.Ordinal);
+        Assert.Contains("DownloadDiarizationModelButton", xaml, StringComparison.Ordinal);
+        Assert.Contains("Скачать модель разделения на спикеров", xaml, StringComparison.Ordinal);
+        Assert.Contains("DownloadAsrModelRequested", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("DownloadDiarizationModelRequested", codeBehind, StringComparison.Ordinal);
+        Assert.DoesNotContain("TranscriptionUnavailableText", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Скачать недостающие модели", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain(">Скачать модели<", xaml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ModelDownloadButtonsAreVisibleOnlyForMissingModels()
+    {
+        Assert.True(MainWindowTranscriptionSettings.ShouldShowAsrModelDownloadButton(
+            new ModelListItemViewModel("gigaam-v3-ru-quality", "GigaAM v3", "asr", "NotInstalled"),
+            isDownloading: false));
+
+        Assert.False(MainWindowTranscriptionSettings.ShouldShowAsrModelDownloadButton(
+            new ModelListItemViewModel("gigaam-v3-ru-quality", "GigaAM v3", "asr", "Installed"),
+            isDownloading: false));
+
+        Assert.True(MainWindowTranscriptionSettings.ShouldShowDiarizationModelDownloadButton(
+            new ModelListItemViewModel("pyannote-community-1", "Спикеры — Pyannote Community-1", "diarization", "NotInstalled"),
+            isDownloading: false));
+
+        Assert.False(MainWindowTranscriptionSettings.ShouldShowDiarizationModelDownloadButton(
+            new ModelListItemViewModel("pyannote-community-1", "Спикеры — Pyannote Community-1", "diarization", "Installed"),
+            isDownloading: false));
+    }
+
+    [Fact]
+    public void PrepareForInstalledModelsDisablesDiarizationWhenOnlyDiarizationModelIsMissing()
+    {
+        var settings = new TranscriptionSettings
+        {
+            EnableDiarization = true,
+            SelectedDiarizationModelId = "pyannote-community-1"
+        };
+
+        var result = MainWindowTranscriptionSettings.PrepareForInstalledModels(
+            settings,
+            isAsrInstalled: true,
+            isDiarizationInstalled: false);
+
+        Assert.True(result.CanTranscribe);
+        Assert.False(result.Settings.EnableDiarization);
+        Assert.Null(result.Settings.NumSpeakers);
+    }
+
+    [Fact]
+    public void PrepareForInstalledModelsBlocksTranscriptionWhenAsrModelIsMissing()
+    {
+        var settings = new TranscriptionSettings
+        {
+            EnableDiarization = true,
+            SelectedAsrModelId = "gigaam-v3-ru-quality",
+            SelectedDiarizationModelId = "pyannote-community-1"
+        };
+
+        var result = MainWindowTranscriptionSettings.PrepareForInstalledModels(
+            settings,
+            isAsrInstalled: false,
+            isDiarizationInstalled: true);
+
+        Assert.False(result.CanTranscribe);
+        Assert.True(result.Settings.EnableDiarization);
+    }
+
+    [Fact]
+    public void PreparePipelineSettingsForJobDisablesDiarizationWhenJobHasNoDiarizationModel()
+    {
+        var current = new TranscriptionSettings
+        {
+            EnableDiarization = true,
+            SelectedAsrModelId = "gigaam-v3-ru-quality",
+            SelectedDiarizationModelId = "pyannote-community-1",
+            NumSpeakers = 3
+        };
+
+        var settings = MainWindowTranscriptionSettings.PreparePipelineSettingsForJob(
+            current,
+            "gigaam-v3-ru-quality",
+            diarizationModelId: null);
+
+        Assert.False(settings.EnableDiarization);
+        Assert.Null(settings.NumSpeakers);
     }
 
     [Fact]

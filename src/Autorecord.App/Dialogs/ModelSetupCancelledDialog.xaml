@@ -1,0 +1,27 @@
+<Window x:Class="Autorecord.App.Dialogs.ModelSetupCancelledDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Модели не установлены"
+        Width="460"
+        Height="190"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="Транскрибация производиться не будет, пока не установлены модели. Скачать модели можно на вкладке &quot;Транскрибация&quot;."
+                   TextWrapping="Wrap" />
+
+        <Button Grid.Row="1"
+                Width="100"
+                HorizontalAlignment="Right"
+                IsDefault="True"
+                IsCancel="True"
+                Click="Ok_Click">
+            Ок
+        </Button>
+    </Grid>
+</Window>

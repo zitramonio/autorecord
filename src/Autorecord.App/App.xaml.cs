@@ -78,6 +78,8 @@ public partial class App : System.Windows.Application
         _mainWindow.ManualRecordingStartRequested += MainWindow_ManualRecordingStartRequested;
         _mainWindow.ManualRecordingStopRequested += MainWindow_ManualRecordingStopRequested;
         _mainWindow.DownloadSelectedModelRequested += MainWindow_DownloadSelectedModelRequested;
+        _mainWindow.DownloadAsrModelRequested += MainWindow_DownloadAsrModelRequested;
+        _mainWindow.DownloadDiarizationModelRequested += MainWindow_DownloadDiarizationModelRequested;
         _mainWindow.CancelModelDownloadRequested += MainWindow_CancelModelDownloadRequested;
         _mainWindow.DeleteSelectedModelRequested += MainWindow_DeleteSelectedModelRequested;
         _mainWindow.ValidateSelectedModelRequested += MainWindow_ValidateSelectedModelRequested;
@@ -118,6 +120,7 @@ public partial class App : System.Windows.Application
         else
         {
             _mainWindow.Show();
+            _ = PromptInitialModelSetupAsync(_shutdown.Token);
         }
 
         _calendarLoop = RunCalendarRefreshLoopAsync(_shutdown.Token);
@@ -164,6 +167,16 @@ public partial class App : System.Windows.Application
     private void MainWindow_DownloadSelectedModelRequested(object? sender, EventArgs e)
     {
         _ = DownloadSelectedModelAsync(_shutdown.Token);
+    }
+
+    private void MainWindow_DownloadAsrModelRequested(object? sender, EventArgs e)
+    {
+        _ = DownloadSingleModelAsync(AutorecordDefaults.AsrModelId, _shutdown.Token);
+    }
+
+    private void MainWindow_DownloadDiarizationModelRequested(object? sender, EventArgs e)
+    {
+        _ = DownloadSingleModelAsync(AutorecordDefaults.DiarizationModelId, _shutdown.Token);
     }
 
     private void MainWindow_CancelModelDownloadRequested(object? sender, EventArgs e)
@@ -272,7 +285,7 @@ public partial class App : System.Windows.Application
 
         try
         {
-            PrepareRecordingSpeakerCountPrompt();
+            await PrepareRecordingSpeakerCountPromptAsync(cancellationToken);
             await _recordingCoordinator.ConfirmStopAsync(cancellationToken);
             SetRecordingState(false, "Запись остановлена. MP3 сохраняется...");
             SetStatus("Запись остановлена. MP3 сохраняется...");
@@ -555,7 +568,7 @@ public partial class App : System.Windows.Application
             var action = StopRecordingPrompt.ResolveAction(dialog.Response);
             if (action == StopRecordingPromptAction.Stop)
             {
-                PrepareRecordingSpeakerCountPrompt();
+                await PrepareRecordingSpeakerCountPromptAsync(cancellationToken);
                 await _recordingCoordinator.ConfirmStopAsync(cancellationToken);
                 SetRecordingState(false, "Запись остановлена. MP3 сохраняется...");
                 SetStatus(dialog.Response == StopRecordingDialogResponse.Timeout
@@ -707,15 +720,8 @@ public partial class App : System.Windows.Application
 
     private async Task DownloadSelectedModelAsync(CancellationToken cancellationToken)
     {
-        if (_modelDownloadCancellation is not null)
-        {
-            SetStatus("Скачивание модели уже выполняется.");
-            return;
-        }
-
         if (_mainWindow is null
             || !_mainWindow.TryGetCurrentSettings(out var currentSettings)
-            || !TryGetModelById(currentSettings.Transcription.SelectedAsrModelId, out var model)
             || _modelCatalog is null
             || _modelDownloadService is null
             || _modelInstallService is null
@@ -725,7 +731,54 @@ public partial class App : System.Windows.Application
         }
 
         SetCurrentSettings(currentSettings);
-        var transcriptionSettings = currentSettings.Transcription;
+        var modelsToInstall = await GetMissingSelectedModelsAsync(currentSettings.Transcription, cancellationToken);
+        await DownloadModelsAsync(modelsToInstall, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<ModelCatalogEntry>> GetMissingSelectedModelsAsync(
+        TranscriptionSettings transcriptionSettings,
+        CancellationToken cancellationToken)
+    {
+        if (_modelCatalog is null || _modelManager is null)
+        {
+            return [];
+        }
+
+        var asrModel = _modelCatalog.GetRequired(transcriptionSettings.SelectedAsrModelId);
+        var asrStatus = await _modelManager.GetStatusAsync(asrModel, cancellationToken);
+        ModelCatalogEntry? diarizationModel = null;
+        ModelInstallStatus? diarizationStatus = null;
+
+        if (transcriptionSettings.EnableDiarization
+            && !string.IsNullOrWhiteSpace(transcriptionSettings.SelectedDiarizationModelId))
+        {
+            diarizationModel = _modelCatalog.GetRequired(transcriptionSettings.SelectedDiarizationModelId);
+            diarizationStatus = await _modelManager.GetStatusAsync(diarizationModel, cancellationToken);
+        }
+
+        return ModelDownloadPlan.Create(
+            asrModel,
+            asrStatus,
+            transcriptionSettings.EnableDiarization,
+            diarizationModel,
+            diarizationStatus);
+    }
+
+    private async Task DownloadModelsAsync(
+        IReadOnlyList<ModelCatalogEntry> modelsToInstall,
+        CancellationToken cancellationToken)
+    {
+        if (_modelDownloadCancellation is not null)
+        {
+            SetStatus("Скачивание модели уже выполняется.");
+            return;
+        }
+
+        if (_modelDownloadService is null || _modelInstallService is null || _modelManager is null)
+        {
+            return;
+        }
+
         var tempPaths = new List<string>();
         using var downloadCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _modelDownloadCancellation = downloadCancellation;
@@ -734,23 +787,6 @@ public partial class App : System.Windows.Application
             SetModelDownloadBusy(true);
             SetModelDownloadProgress(new ModelDownloadProgress());
             var progress = new Progress<ModelDownloadProgress>(SetModelDownloadProgress);
-            var modelStatus = await _modelManager.GetStatusAsync(model, downloadCancellation.Token);
-            ModelCatalogEntry? diarizationModel = null;
-            ModelInstallStatus? diarizationStatus = null;
-
-            if (transcriptionSettings.EnableDiarization
-                && !string.IsNullOrWhiteSpace(transcriptionSettings.SelectedDiarizationModelId))
-            {
-                diarizationModel = _modelCatalog.GetRequired(transcriptionSettings.SelectedDiarizationModelId);
-                diarizationStatus = await _modelManager.GetStatusAsync(diarizationModel, downloadCancellation.Token);
-            }
-
-            var modelsToInstall = ModelDownloadPlan.Create(
-                model,
-                modelStatus,
-                transcriptionSettings.EnableDiarization,
-                diarizationModel,
-                diarizationStatus);
             if (modelsToInstall.Count == 0)
             {
                 SetModelDownloadProgress(100);
@@ -807,6 +843,84 @@ public partial class App : System.Windows.Application
                 DeleteTempFileQuietly(tempPath);
             }
         }
+    }
+
+    private async Task PromptInitialModelSetupAsync(CancellationToken cancellationToken)
+    {
+        if (_mainWindow is null || _settingsStore is null || _modelCatalog is null || _modelManager is null)
+        {
+            return;
+        }
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var transcriptionSettings = GetCurrentTranscriptionSettings();
+            if (transcriptionSettings.InitialModelSetupPromptDismissed)
+            {
+                return;
+            }
+
+            var asrModel = _modelCatalog.GetRequired(AutorecordDefaults.AsrModelId);
+            var diarizationModel = _modelCatalog.GetRequired(AutorecordDefaults.DiarizationModelId);
+            var asrMissing = await _modelManager.GetStatusAsync(asrModel, cancellationToken) != ModelInstallStatus.Installed;
+            var diarizationMissing = await _modelManager.GetStatusAsync(diarizationModel, cancellationToken) != ModelInstallStatus.Installed;
+            if (!asrMissing && !diarizationMissing)
+            {
+                return;
+            }
+
+            var action = Dispatcher.Invoke(() =>
+            {
+                var dialog = new InitialModelSetupDialog(asrMissing, diarizationMissing)
+                {
+                    Owner = _mainWindow
+                };
+
+                return dialog.ShowDialog() == true
+                    ? dialog.SelectedAction
+                    : InitialModelSetupAction.Cancel;
+            });
+
+            if (action == InitialModelSetupAction.Cancel)
+            {
+                var dismissedSettings = NormalizeReleaseSettings(_settings with
+                {
+                    Transcription = transcriptionSettings with
+                    {
+                        InitialModelSetupPromptDismissed = true
+                    }
+                });
+                SetCurrentSettings(dismissedSettings);
+                await _settingsStore.SaveAsync(dismissedSettings, cancellationToken);
+                SetStatus("Транскрибация производиться не будет: модели не установлены.");
+                Dispatcher.Invoke(() =>
+                {
+                    var dialog = new ModelSetupCancelledDialog
+                    {
+                        Owner = _mainWindow
+                    };
+                    dialog.ShowDialog();
+                });
+                return;
+            }
+
+            var modelToInstall = action == InitialModelSetupAction.DownloadAsr
+                ? asrModel
+                : diarizationModel;
+            await DownloadModelsAsync([modelToInstall], cancellationToken);
+        }
+    }
+
+    private async Task DownloadSingleModelAsync(string modelId, CancellationToken cancellationToken)
+    {
+        if (_modelCatalog is null)
+        {
+            SetStatus("Каталог моделей не загружен.");
+            return;
+        }
+
+        var model = _modelCatalog.GetRequired(modelId);
+        await DownloadModelsAsync([model], cancellationToken);
     }
 
     private async Task DownloadAndInstallModelAsync(
@@ -1220,26 +1334,39 @@ public partial class App : System.Windows.Application
             return;
         }
 
-        var dialog = new Microsoft.Win32.OpenFileDialog
-        {
-            Filter = "Audio and video|*.wav;*.mp3;*.m4a;*.flac;*.ogg;*.mp4;*.mkv|All files|*.*"
-        };
-
-        if (dialog.ShowDialog(_mainWindow) != true)
-        {
-            return;
-        }
-
         try
         {
-            var speakerCount = await RequestSpeakerCountForTranscriptionAsync(
-                settings.Transcription.NumSpeakers,
+            var transcriptionSettings = await PrepareTranscriptionSettingsForInstalledModelsAsync(
+                settings.Transcription,
+                showMissingAsrDialog: true,
                 cancellationToken);
+            if (transcriptionSettings is null)
+            {
+                return;
+            }
+
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Filter = "Audio and video|*.wav;*.mp3;*.m4a;*.flac;*.ogg;*.mp4;*.mkv|All files|*.*"
+            };
+
+            if (dialog.ShowDialog(_mainWindow) != true)
+            {
+                return;
+            }
+
+            if (transcriptionSettings.EnableDiarization)
+            {
+                var speakerCount = await RequestSpeakerCountForTranscriptionAsync(
+                    transcriptionSettings.NumSpeakers,
+                    cancellationToken);
+                transcriptionSettings = transcriptionSettings with { NumSpeakers = speakerCount };
+            }
+
             settings = settings with
             {
-                Transcription = settings.Transcription with { NumSpeakers = speakerCount }
+                Transcription = transcriptionSettings
             };
-            SetCurrentSettings(settings);
             var outputDirectory = ResolveTranscriptionOutputDirectory(dialog.FileName, settings.Transcription);
             var diarizationModelId = settings.Transcription.EnableDiarization
                 ? settings.Transcription.SelectedDiarizationModelId
@@ -1276,6 +1403,81 @@ public partial class App : System.Windows.Application
         return _transcriptionQueue?.Jobs.FirstOrDefault(job => job.Id == jobId);
     }
 
+    private async Task<TranscriptionSettings?> PrepareTranscriptionSettingsForInstalledModelsAsync(
+        TranscriptionSettings settings,
+        bool showMissingAsrDialog,
+        CancellationToken cancellationToken)
+    {
+        if (_modelCatalog is null || _modelManager is null)
+        {
+            return settings;
+        }
+
+        var isAsrInstalled = await IsModelInstalledAsync(settings.SelectedAsrModelId, cancellationToken);
+        var isDiarizationInstalled = !settings.EnableDiarization
+            || string.IsNullOrWhiteSpace(settings.SelectedDiarizationModelId)
+            || await IsModelInstalledAsync(settings.SelectedDiarizationModelId, cancellationToken);
+
+        var prepared = MainWindowTranscriptionSettings.PrepareForInstalledModels(
+            settings,
+            isAsrInstalled,
+            isDiarizationInstalled);
+        if (!prepared.CanTranscribe)
+        {
+            if (showMissingAsrDialog)
+            {
+                ShowTranscriptionModelRequiredDialog();
+            }
+
+            SetStatus("Для транскрибации нужно скачать модель транскрибации.");
+            return null;
+        }
+
+        if (settings.EnableDiarization && !prepared.Settings.EnableDiarization)
+        {
+            SetStatus("Модель разделения на спикеров не установлена. Транскрибация будет выполнена без разделения на спикеров.");
+        }
+
+        return prepared.Settings;
+    }
+
+    private async Task<bool> IsModelInstalledAsync(string? modelId, CancellationToken cancellationToken)
+    {
+        if (_modelCatalog is null || _modelManager is null || string.IsNullOrWhiteSpace(modelId))
+        {
+            return false;
+        }
+
+        try
+        {
+            var model = _modelCatalog.GetRequired(modelId);
+            var status = await _modelManager.GetStatusAsync(model, cancellationToken);
+            return status == ModelInstallStatus.Installed;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private void ShowTranscriptionModelRequiredDialog()
+    {
+        if (_mainWindow is null || Dispatcher.HasShutdownStarted)
+        {
+            return;
+        }
+
+        Dispatcher.Invoke(() =>
+        {
+            System.Windows.MessageBox.Show(
+                _mainWindow,
+                "Для транскрибации нужно скачать модель транскрибации.",
+                "Модель транскрибации не установлена",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        });
+    }
+
     private async Task EnqueueRecordingForTranscriptionAsync(
         RecordingSession session,
         CancellationToken cancellationToken)
@@ -1294,11 +1496,24 @@ public partial class App : System.Windows.Application
 
         try
         {
-            var speakerCount = await TakeRecordingSpeakerCountAsync(
-                transcriptionSettings.NumSpeakers,
+            var preparedSettings = await PrepareTranscriptionSettingsForInstalledModelsAsync(
+                transcriptionSettings,
+                showMissingAsrDialog: true,
                 cancellationToken);
-            transcriptionSettings = transcriptionSettings with { NumSpeakers = speakerCount };
-            SetCurrentTranscriptionSettings(transcriptionSettings);
+            if (preparedSettings is null)
+            {
+                return;
+            }
+
+            transcriptionSettings = preparedSettings;
+            if (transcriptionSettings.EnableDiarization)
+            {
+                var speakerCount = await TakeRecordingSpeakerCountAsync(
+                    transcriptionSettings.NumSpeakers,
+                    cancellationToken);
+                transcriptionSettings = transcriptionSettings with { NumSpeakers = speakerCount };
+            }
+
             var enqueued = await RecordingTranscriptionEnqueuer.EnqueueAsync(
                 session,
                 transcriptionSettings,
@@ -1573,9 +1788,18 @@ public partial class App : System.Windows.Application
         }
     }
 
-    private void PrepareRecordingSpeakerCountPrompt()
+    private async Task PrepareRecordingSpeakerCountPromptAsync(CancellationToken cancellationToken)
     {
-        var initialSpeakerCount = GetCurrentTranscriptionSettings().NumSpeakers;
+        var settings = await PrepareTranscriptionSettingsForInstalledModelsAsync(
+            GetCurrentTranscriptionSettings(),
+            showMissingAsrDialog: false,
+            cancellationToken);
+        if (settings?.EnableDiarization != true)
+        {
+            return;
+        }
+
+        var initialSpeakerCount = settings.NumSpeakers;
         lock (_speakerCountPromptGate)
         {
             _pendingRecordingSpeakerCountTask = RequestSpeakerCountForTranscriptionAsync(
@@ -1668,7 +1892,8 @@ public partial class App : System.Windows.Application
 
     private static bool IsReleaseTranscriptionJob(TranscriptionJob job)
     {
-        return string.Equals(job.DiarizationModelId, AutorecordDefaults.DiarizationModelId, StringComparison.OrdinalIgnoreCase);
+        return string.IsNullOrWhiteSpace(job.DiarizationModelId)
+            || string.Equals(job.DiarizationModelId, AutorecordDefaults.DiarizationModelId, StringComparison.OrdinalIgnoreCase);
     }
 
     private void SetSelectedModelStatus(string status)
@@ -1781,7 +2006,11 @@ public partial class App : System.Windows.Application
             IProgress<int> progress,
             CancellationToken cancellationToken)
         {
-            var pipeline = createPipeline(getSettings());
+            var settings = MainWindowTranscriptionSettings.PreparePipelineSettingsForJob(
+                getSettings(),
+                job.AsrModelId,
+                job.DiarizationModelId);
+            var pipeline = createPipeline(settings);
             return pipeline.RunAsync(job, progress, cancellationToken);
         }
     }

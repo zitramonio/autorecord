@@ -36,6 +36,22 @@ public sealed class CurrentTranscriptionSelectionTests
     }
 
     [Fact]
+    public void SelectCurrentTranscriptionJobKeepsJobWithoutDiarizationVisible()
+    {
+        var completed = CreateReleaseJob(TranscriptionJobStatus.Completed) with
+        {
+            DiarizationModelId = null,
+            FinishedAt = DateTimeOffset.Parse("2026-05-13T12:18:03+03:00"),
+            ProgressPercent = 100,
+            OutputFiles = ["C:\\Users\\User\\Documents\\Autorecord\\13.05.2026 12.14.md"]
+        };
+
+        var selected = SelectCurrentTranscriptionJob([completed]);
+
+        Assert.Equal(completed.Id, selected?.Id);
+    }
+
+    [Fact]
     public void SelectCurrentTranscriptionJobKeepsParakeetJobVisible()
     {
         var completed = CreateReleaseJob(TranscriptionJobStatus.Completed) with
