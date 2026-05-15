@@ -37,16 +37,9 @@ Autorecord - Windows-приложение для автоматической з
 - Pyannote Community-1 worker для локальной диаризации
 - xUnit-тесты для core-логики
 
-## Документация
-
-- [Дизайн MVP](docs/superpowers/specs/2026-05-06-autorecord-design.md)
-- [План реализации MVP](docs/superpowers/plans/2026-05-06-autorecord-mvp.md)
-- [Инструкция по Hugging Face token для Pyannote](docs/huggingface-token-pyannote.md)
-- [Текущий контекст проекта](context/project.md)
-
 ## Статус
 
-Autorecord находится в активной разработке. Реализованы запись встреч, safe-save MP3, локальная транскрибация и базовый релизный сценарий с GigaAM v3 + Pyannote Community-1. Следующий практический шаг - ручная GUI-проверка полного сценария на реальной записи: старт, остановка, выбор числа спикеров, автотранскрибация и проверка созданных transcript-файлов.
+Autorecord находится в активной разработке. Реализованы запись встреч, safe-save MP3, локальная транскрибация и базовый релизный сценарий с GigaAM v3 + Pyannote Community-1. 
 
 ## Ограничения
 
