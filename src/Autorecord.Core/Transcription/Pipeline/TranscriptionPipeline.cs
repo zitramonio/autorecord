@@ -13,7 +13,7 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
     private readonly ModelManager _modelManager;
     private readonly AudioNormalizer _audioNormalizer;
     private readonly IReadOnlyDictionary<string, ITranscriptionEngine> _asrEngines;
-    private readonly IDiarizationEngine _diarizationEngine;
+    private readonly IReadOnlyDictionary<string, IDiarizationEngine> _diarizationEngines;
     private readonly TranscriptExporter _exporter;
     private readonly TranscriptionSettings _settings;
 
@@ -22,7 +22,7 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
         ModelManager modelManager,
         AudioNormalizer audioNormalizer,
         IReadOnlyDictionary<string, ITranscriptionEngine> asrEngines,
-        IDiarizationEngine diarizationEngine,
+        IReadOnlyDictionary<string, IDiarizationEngine> diarizationEngines,
         TranscriptExporter exporter,
         TranscriptionSettings settings)
     {
@@ -30,7 +30,7 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
         _modelManager = modelManager;
         _audioNormalizer = audioNormalizer;
         _asrEngines = asrEngines;
-        _diarizationEngine = diarizationEngine;
+        _diarizationEngines = diarizationEngines;
         _exporter = exporter;
         _settings = settings;
     }
@@ -76,7 +76,13 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
         IReadOnlyList<DiarizationTurn> diarizationTurns = [];
         if (diarizationModel is not null)
         {
-            diarizationTurns = await _diarizationEngine.DiarizeAsync(
+            if (!_diarizationEngines.TryGetValue(diarizationModel.Engine, out var diarizationEngine))
+            {
+                throw new InvalidOperationException(
+                    $"Diarization engine '{diarizationModel.Engine}' is not registered for model '{diarizationModel.Id}'.");
+            }
+
+            diarizationTurns = await diarizationEngine.DiarizeAsync(
                 normalized.NormalizedWavPath,
                 _modelManager.GetModelPath(diarizationModel),
                 _settings.NumSpeakers,
@@ -85,9 +91,11 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
                 cancellationToken);
         }
 
-        var asrResult = await asrEngine.TranscribeAsync(
+        var asrResult = await TranscribeAsync(
+            asrEngine,
             normalized.NormalizedWavPath,
             _modelManager.GetModelPath(asrModel),
+            diarizationTurns,
             pipelineProgress.CreateStage(diarizationModel is null ? 10 : 45, 95),
             cancellationToken);
 
@@ -135,6 +143,36 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
         {
             throw new TranscriptionModelNotInstalledException(model.Id, status.ToString());
         }
+    }
+
+    private static async Task<TranscriptionEngineResult> TranscribeAsync(
+        ITranscriptionEngine asrEngine,
+        string normalizedWavPath,
+        string modelPath,
+        IReadOnlyList<DiarizationTurn> diarizationTurns,
+        IProgress<int> progress,
+        CancellationToken cancellationToken)
+    {
+        if (diarizationTurns.Count > 0 && asrEngine is ISegmentedTranscriptionEngine segmentedEngine)
+        {
+            return await segmentedEngine.TranscribeAsync(
+                normalizedWavPath,
+                modelPath,
+                BuildTranscriptionIntervals(diarizationTurns),
+                progress,
+                cancellationToken);
+        }
+
+        return await asrEngine.TranscribeAsync(normalizedWavPath, modelPath, progress, cancellationToken);
+    }
+
+    private static IReadOnlyList<TranscriptionEngineInterval> BuildTranscriptionIntervals(
+        IReadOnlyList<DiarizationTurn> diarizationTurns)
+    {
+        return diarizationTurns
+            .OrderBy(turn => turn.Start)
+            .Select(turn => new TranscriptionEngineInterval(turn.Start, turn.End))
+            .ToList();
     }
 
     private static IReadOnlyList<TranscriptSpeaker> BuildSpeakers(IReadOnlyList<TranscriptSegment> segments)

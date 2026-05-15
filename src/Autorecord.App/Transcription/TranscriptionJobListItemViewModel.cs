@@ -7,8 +7,9 @@ public sealed record TranscriptionJobListItemViewModel
     public Guid Id { get; init; }
     public string File { get; init; } = "";
     public string Model { get; init; } = "";
+    public string DiarizationModel { get; init; } = "";
     public string Status { get; init; } = "";
-    public string Progress { get; init; } = "";
+    public string StageLines { get; init; } = "";
     public string CreatedAt { get; init; } = "";
     public string CompletedAt { get; init; } = "";
     public bool CanOpenTranscript { get; init; }
@@ -23,9 +24,12 @@ public sealed record TranscriptionJobListItemViewModel
         {
             Id = job.Id,
             File = job.InputFilePath,
-            Model = job.AsrModelId,
+            Model = FormatAsrModel(job.AsrModelId),
+            DiarizationModel = string.IsNullOrWhiteSpace(job.DiarizationModelId)
+                ? "Без разделения"
+                : job.DiarizationModelId,
             Status = FormatJobStatus(job),
-            Progress = $"{job.ProgressPercent}%",
+            StageLines = FormatStageLines(job),
             CreatedAt = job.CreatedAt.ToLocalTime().ToString("g"),
             CompletedAt = job.FinishedAt?.ToLocalTime().ToString("g") ?? "",
             CanOpenTranscript = job.Status == TranscriptionJobStatus.Completed && job.OutputFiles.Count > 0,
@@ -46,5 +50,72 @@ public sealed record TranscriptionJobListItemViewModel
         return job.Status == TranscriptionJobStatus.Failed && !string.IsNullOrWhiteSpace(job.ErrorMessage)
             ? $"{job.Status}: {job.ErrorMessage}"
             : job.Status.ToString();
+    }
+
+    private static string FormatAsrModel(string modelId)
+    {
+        return string.Equals(modelId, "gigaam-v3-ru-quality", StringComparison.OrdinalIgnoreCase)
+            ? "GigaAM v3"
+            : modelId;
+    }
+
+    private static string FormatStageLines(TranscriptionJob job)
+    {
+        var currentStage = GetStageIndex(job.ProgressPercent);
+        return string.Join(Environment.NewLine,
+            FormatStage("Чтение файла", stageIndex: 0, currentStage, job.Status),
+            FormatStage("Диаризация", stageIndex: 1, currentStage, job.Status),
+            FormatStage("Транскрибация", stageIndex: 2, currentStage, job.Status),
+            FormatStage("Сохранение транскрипта", stageIndex: 3, currentStage, job.Status));
+    }
+
+    private static string FormatStage(
+        string name,
+        int stageIndex,
+        int currentStage,
+        TranscriptionJobStatus status)
+    {
+        var state = status switch
+        {
+            TranscriptionJobStatus.Completed => "готово",
+            TranscriptionJobStatus.Pending or TranscriptionJobStatus.WaitingForModel => "ожидает",
+            TranscriptionJobStatus.Running => FormatRunningStageState(stageIndex, currentStage),
+            TranscriptionJobStatus.Failed => FormatTerminalStageState(stageIndex, currentStage, "ошибка"),
+            TranscriptionJobStatus.Cancelled => FormatTerminalStageState(stageIndex, currentStage, "отменено"),
+            _ => "ожидает"
+        };
+
+        return $"{name}: {state}";
+    }
+
+    private static string FormatRunningStageState(int stageIndex, int currentStage)
+    {
+        if (stageIndex < currentStage)
+        {
+            return "готово";
+        }
+
+        return stageIndex == currentStage ? "выполняется" : "ожидает";
+    }
+
+    private static string FormatTerminalStageState(int stageIndex, int currentStage, string currentState)
+    {
+        if (stageIndex < currentStage)
+        {
+            return "готово";
+        }
+
+        return stageIndex == currentStage ? currentState : "ожидает";
+    }
+
+    private static int GetStageIndex(int progressPercent)
+    {
+        return Math.Clamp(progressPercent, 0, 100) switch
+        {
+            < 10 => 0,
+            < 45 => 1,
+            < 95 => 2,
+            _ => 3
+        };
     }
 }

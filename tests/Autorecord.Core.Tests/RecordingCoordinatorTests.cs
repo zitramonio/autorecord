@@ -416,6 +416,28 @@ public sealed class RecordingCoordinatorTests
     }
 
     [Fact]
+    public async Task SilentLevelsDoNotRaiseStopPromptWhenAutoStopDisabled()
+    {
+        var now = new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero);
+        using var temp = new TempFolder();
+        var recorder = new FakeAudioRecorder();
+        var coordinator = new RecordingCoordinator(() => recorder, () => now);
+        var prompts = 0;
+
+        coordinator.StopPromptRequired += (_, _) => prompts++;
+
+        await coordinator.StartAsync(
+            CreateEvent(now),
+            CreateSettings(temp.Path) with { AutoStopRecordingOnSilence = false },
+            CancellationToken.None);
+        recorder.RaiseLevel(new AudioLevel(0, 0));
+        now = now.AddMinutes(10);
+        recorder.RaiseLevel(new AudioLevel(0, 0));
+
+        Assert.Equal(0, prompts);
+    }
+
+    [Fact]
     public async Task ConcurrentSilentLevelsRaiseSingleStopPromptWhileWaitingForAnswer()
     {
         var now = new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero);

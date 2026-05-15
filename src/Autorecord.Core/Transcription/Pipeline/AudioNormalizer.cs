@@ -1,3 +1,4 @@
+using Autorecord.Core.Audio;
 using NAudio.Wave;
 
 namespace Autorecord.Core.Transcription.Pipeline;
@@ -20,24 +21,42 @@ public sealed class AudioNormalizer
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        _ = keepIntermediateFiles;
-
-        if (IsAlreadyNormalizedWav(inputPath))
-        {
-            return Task.FromResult(new NormalizedAudio(inputPath, CreatedTemporaryFile: false));
-        }
 
         return Task.Run(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
-            Directory.CreateDirectory(_tempRoot);
 
+            var readerInputPath = inputPath;
+            string? repairedWavPath = null;
+            if (IsWav(inputPath))
+            {
+                try
+                {
+                    if (IsAlreadyNormalizedWav(inputPath))
+                    {
+                        return new NormalizedAudio(inputPath, CreatedTemporaryFile: false);
+                    }
+                }
+                catch (FormatException)
+                {
+                    Directory.CreateDirectory(_tempRoot);
+                    repairedWavPath = CreateRepairedOutputPath();
+                    if (!WavFileRepair.TryCreateRepairedCopy(inputPath, repairedWavPath))
+                    {
+                        throw;
+                    }
+
+                    readerInputPath = repairedWavPath;
+                }
+            }
+
+            Directory.CreateDirectory(_tempRoot);
             var outputPath = CreateNormalizedOutputPath();
             var stagingPath = $"{outputPath}.tmp";
 
             try
             {
-                using var reader = CreateReader(inputPath);
+                using var reader = CreateReader(readerInputPath);
                 using var resampler = new MediaFoundationResampler(reader, TargetFormat)
                 {
                     ResamplerQuality = 60
@@ -56,12 +75,26 @@ public sealed class AudioNormalizer
 
                 throw;
             }
+            finally
+            {
+                if (!keepIntermediateFiles &&
+                    !string.IsNullOrWhiteSpace(repairedWavPath) &&
+                    File.Exists(repairedWavPath))
+                {
+                    File.Delete(repairedWavPath);
+                }
+            }
         }, cancellationToken);
+    }
+
+    private static bool IsWav(string inputPath)
+    {
+        return inputPath.EndsWith(".wav", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsAlreadyNormalizedWav(string inputPath)
     {
-        if (!inputPath.EndsWith(".wav", StringComparison.OrdinalIgnoreCase))
+        if (!IsWav(inputPath))
         {
             return false;
         }
@@ -77,7 +110,7 @@ public sealed class AudioNormalizer
 
     private static WaveStream CreateReader(string inputPath)
     {
-        if (inputPath.EndsWith(".wav", StringComparison.OrdinalIgnoreCase))
+        if (IsWav(inputPath))
         {
             return new WaveFileReader(inputPath);
         }
@@ -88,6 +121,11 @@ public sealed class AudioNormalizer
     private string CreateNormalizedOutputPath()
     {
         return Path.Combine(_tempRoot, $"{Guid.NewGuid():N}.normalized.wav");
+    }
+
+    private string CreateRepairedOutputPath()
+    {
+        return Path.Combine(_tempRoot, $"{Guid.NewGuid():N}.repaired.wav");
     }
 
     private static WaveFormat NormalizeFormat(WaveFormat format)

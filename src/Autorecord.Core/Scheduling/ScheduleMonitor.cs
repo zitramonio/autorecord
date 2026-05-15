@@ -11,9 +11,10 @@ public static class ScheduleMonitor
         DateTimeOffset now,
         bool recordingActive,
         DateTimeOffset? appStartedAt = null,
-        IReadOnlySet<DateTimeOffset>? handledStartsAt = null)
+        IReadOnlySet<DateTimeOffset>? handledStartsAt = null,
+        bool autoStartEnabled = true)
     {
-        if (recordingActive)
+        if (!autoStartEnabled || recordingActive)
         {
             return null;
         }

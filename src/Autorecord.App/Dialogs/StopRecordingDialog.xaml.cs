@@ -15,9 +15,18 @@ public partial class StopRecordingDialog : Window
 {
     private DispatcherTimer? _autoStopTimer;
 
+    private readonly TimeSpan _autoStopTimeout = StopRecordingPrompt.DefaultAutoStopTimeout;
+
     public StopRecordingDialog()
     {
         InitializeComponent();
+    }
+
+    public StopRecordingDialog(TimeSpan autoStopTimeout)
+        : this()
+    {
+        _autoStopTimeout = autoStopTimeout;
+        PromptText.Text = $"На вводе и выводе тишина. Остановить запись? Если ответа нет {FormatMinutes(autoStopTimeout)}, запись остановится автоматически.";
     }
 
     public StopRecordingDialogResponse Response { get; private set; }
@@ -27,10 +36,16 @@ public partial class StopRecordingDialog : Window
         base.OnContentRendered(e);
         _autoStopTimer = new DispatcherTimer
         {
-            Interval = StopRecordingPrompt.AutoStopTimeout
+            Interval = _autoStopTimeout
         };
         _autoStopTimer.Tick += AutoStopTimer_Tick;
         _autoStopTimer.Start();
+    }
+
+    private static string FormatMinutes(TimeSpan timeout)
+    {
+        var minutes = Math.Max(1, (int)Math.Round(timeout.TotalMinutes));
+        return minutes == 1 ? "1 минуту" : $"{minutes} минут";
     }
 
     protected override void OnClosed(EventArgs e)
@@ -80,7 +95,12 @@ public enum StopRecordingPromptAction
 
 public static class StopRecordingPrompt
 {
-    public static TimeSpan AutoStopTimeout { get; } = TimeSpan.FromMinutes(2);
+    public static TimeSpan DefaultAutoStopTimeout { get; } = TimeSpan.FromMinutes(2);
+
+    public static TimeSpan AutoStopTimeout => DefaultAutoStopTimeout;
+
+    public static TimeSpan GetAutoStopTimeout(Autorecord.Core.Settings.AppSettings settings) =>
+        TimeSpan.FromMinutes(settings.NoAnswerStopPromptMinutes);
 
     public static StopRecordingPromptAction ResolveAction(StopRecordingDialogResponse response)
     {

@@ -1,0 +1,38 @@
+<Window x:Class="Autorecord.App.Dialogs.SpeakerCountDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Количество спикеров"
+        Width="360"
+        Height="190"
+        WindowStartupLocation="CenterScreen"
+        Topmost="True"
+        ResizeMode="NoResize">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <TextBlock Text="Укажи количество спикеров"
+                   FontWeight="SemiBold" />
+        <ComboBox x:Name="SpeakerCountBox"
+                  Grid.Row="1"
+                  Width="140"
+                  Margin="0,12,0,0"
+                  HorizontalAlignment="Left"
+                  DisplayMemberPath="DisplayName"
+                  SelectedValuePath="Value" />
+        <TextBlock Grid.Row="2"
+                   Margin="0,12,0,0"
+                   Text="Если ничего не выбрать, через 2 минуты будет использовано Auto."
+                   TextWrapping="Wrap" />
+        <Button Grid.Row="3"
+                Width="120"
+                HorizontalAlignment="Right"
+                IsDefault="True"
+                Click="Continue_Click">
+            Продолжить
+        </Button>
+    </Grid>
+</Window>

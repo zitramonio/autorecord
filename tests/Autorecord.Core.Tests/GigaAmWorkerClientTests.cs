@@ -72,6 +72,65 @@ public sealed class GigaAmWorkerClientTests
     }
 
     [Fact]
+    public async Task RunAsyncPassesIntervalsAsChunksJson()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var workerPath = Path.Combine(root, "fake-worker.cmd");
+            var inputPath = Path.Combine(root, "input.wav");
+            var modelPath = Path.Combine(root, "model");
+            var outputJsonPath = Path.Combine(root, "result.json");
+            Directory.CreateDirectory(modelPath);
+            await File.WriteAllTextAsync(inputPath, "");
+            await File.WriteAllTextAsync(
+                workerPath,
+                """
+                @echo off
+                set "output="
+                set "chunks="
+                :args
+                if "%~1"=="" goto write
+                if "%~1"=="--output-json" (
+                  set "output=%~2"
+                  shift
+                )
+                if "%~1"=="--chunks-json" (
+                  set "chunks=%~2"
+                  shift
+                )
+                shift
+                goto args
+                :write
+                powershell -NoProfile -ExecutionPolicy Bypass -Command "$data = Get-Content -Raw -LiteralPath $env:chunks | ConvertFrom-Json; $result = @{ segments = @(@{ start = [double]$data.chunks[0].start; end = [double]$data.chunks[1].end; text = 'chunks'; confidence = $null }) } | ConvertTo-Json -Compress; [IO.File]::WriteAllText($env:output, $result, [Text.Encoding]::UTF8)"
+                exit /b 0
+                """);
+
+            var client = new GigaAmWorkerClient();
+
+            var result = await client.RunAsync(
+                workerPath,
+                inputPath,
+                modelPath,
+                outputJsonPath,
+                [
+                    new TranscriptionEngineInterval(1.2, 2.3),
+                    new TranscriptionEngineInterval(3.4, 4.5)
+                ],
+                CancellationToken.None);
+
+            var segment = Assert.Single(result.Segments);
+            Assert.Equal(1.2, segment.Start);
+            Assert.Equal(4.5, segment.End);
+            Assert.Equal("chunks", segment.Text);
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public async Task RunAsyncThrowsWithStderrWhenWorkerExitsWithError()
     {
         var root = CreateTempDirectory();

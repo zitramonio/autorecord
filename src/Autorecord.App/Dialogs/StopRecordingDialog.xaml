@@ -12,7 +12,8 @@
             <RowDefinition />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <TextBlock Text="На вводе и выводе тишина. Остановить запись? Если ответа нет 2 минуты, запись остановится автоматически."
+        <TextBlock x:Name="PromptText"
+                   Text="На вводе и выводе тишина. Остановить запись? Если ответа нет 2 минуты, запись остановится автоматически."
                    TextWrapping="Wrap"
                    VerticalAlignment="Center" />
         <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right">

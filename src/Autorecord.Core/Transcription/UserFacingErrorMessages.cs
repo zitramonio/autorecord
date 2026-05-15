@@ -12,6 +12,8 @@ public static class UserFacingErrorMessages
             NotEnoughDiskSpaceException => "Недостаточно места на диске для скачивания модели или сохранения транскрипта.",
             HttpRequestException => "Не удалось скачать модель. Проверьте интернет и свободное место на диске.",
             IOException => "Не удалось скачать модель. Проверьте интернет и свободное место на диске.",
+            InvalidOperationException invalidOperation when IsHuggingFaceAuthorizationError(invalidOperation) =>
+                "Ошибка - неверный токен",
             InvalidOperationException invalidOperation when IsModelValidationError(invalidOperation) =>
                 "Модель скачана, но не прошла проверку. Попробуйте скачать её заново.",
             InvalidOperationException => "Не удалось скачать модель. Проверьте интернет и свободное место на диске.",
@@ -49,5 +51,13 @@ public static class UserFacingErrorMessages
             exception.Message.Contains("required file", StringComparison.OrdinalIgnoreCase) ||
             exception.Message.Contains("validation", StringComparison.OrdinalIgnoreCase) ||
             exception.Message.Contains("провер", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsHuggingFaceAuthorizationError(Exception exception)
+    {
+        return exception.Message.Contains("HTTP 401", StringComparison.OrdinalIgnoreCase) ||
+            exception.Message.Contains("HTTP 403", StringComparison.OrdinalIgnoreCase) ||
+            exception.Message.Contains("Unauthorized", StringComparison.OrdinalIgnoreCase) ||
+            exception.Message.Contains("Forbidden", StringComparison.OrdinalIgnoreCase);
     }
 }

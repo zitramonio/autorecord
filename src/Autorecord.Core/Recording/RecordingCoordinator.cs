@@ -76,9 +76,11 @@ public sealed class RecordingCoordinator
             var session = new RecordingSession(calendarEvent, startedAt, outputPath);
             lock (_policyGate)
             {
-                _stopPolicy = new StopConfirmationPolicy(
-                    TimeSpan.FromMinutes(settings.SilencePromptMinutes),
-                    TimeSpan.FromMinutes(settings.RetryPromptMinutes));
+                _stopPolicy = settings.AutoStopRecordingOnSilence
+                    ? new StopConfirmationPolicy(
+                        TimeSpan.FromMinutes(settings.SilencePromptMinutes),
+                        TimeSpan.FromMinutes(settings.RetryPromptMinutes))
+                    : null;
             }
 
             _recorder = recorder;

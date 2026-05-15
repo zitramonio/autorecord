@@ -50,6 +50,8 @@ public partial class App : System.Windows.Application
     private IReadOnlyList<CalendarEvent> _events = [];
     private Task? _calendarLoop;
     private Task? _scheduleLoop;
+    private readonly object _speakerCountPromptGate = new();
+    private Task<int?>? _pendingRecordingSpeakerCountTask;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -89,7 +91,7 @@ public partial class App : System.Windows.Application
 
         try
         {
-            _settings = await _settingsStore.LoadAsync(_shutdown.Token);
+            _settings = NormalizeReleaseSettings(await _settingsStore.LoadAsync(_shutdown.Token));
             _mainWindow.SetSettings(_settings);
             _mainWindow.SetStatus("Настройки загружены.");
             _ = ApplyRecorderReadinessAsync(_settings, _shutdown.Token);
@@ -270,6 +272,7 @@ public partial class App : System.Windows.Application
 
         try
         {
+            PrepareRecordingSpeakerCountPrompt();
             await _recordingCoordinator.ConfirmStopAsync(cancellationToken);
             SetRecordingState(false, "Запись остановлена. MP3 сохраняется...");
             SetStatus("Запись остановлена. MP3 сохраняется...");
@@ -287,6 +290,7 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        settings = NormalizeReleaseSettings(settings);
         try
         {
             if (settings.StartWithWindows)
@@ -413,7 +417,8 @@ public partial class App : System.Windows.Application
             DateTimeOffset.Now,
             _recordingCoordinator.IsRecording,
             _appStartedAt,
-            _handledStartsAt);
+            _handledStartsAt,
+            _settings.AutoStartRecordingFromCalendar);
 
         if (dueEvent is null)
         {
@@ -433,14 +438,14 @@ public partial class App : System.Windows.Application
 
     private void RecordingCoordinator_RecordingStarted(object? sender, RecordingSession session)
     {
-        _notificationService?.ShowInfo("Запись началась", session.CalendarEvent.Title);
+        ShowNotification("Запись началась", session.CalendarEvent.Title);
         SetRecordingState(true, session.CalendarEvent.Title);
         SetStatus($"Запись началась: {session.CalendarEvent.Title}");
     }
 
     private void RecordingCoordinator_RecordingSaved(object? sender, RecordingSession session)
     {
-        _notificationService?.ShowInfo("Запись сохранена", session.OutputPath);
+        ShowNotification("Запись сохранена", session.OutputPath);
         SetRecordingState(false, $"Запись сохранена: {session.OutputPath}");
         SetStatus($"Запись сохранена: {session.OutputPath}");
         _ = EnqueueRecordingForTranscriptionAsync(session, _shutdown.Token);
@@ -449,7 +454,7 @@ public partial class App : System.Windows.Application
     private void RecordingCoordinator_RecordingSaveFailed(object? sender, RecordingSaveFailedEventArgs args)
     {
         var message = $"MP3 не сохранён. Резервный WAV оставлен: {args.TemporaryWavPath}. Ошибка: {args.Error.Message}";
-        _notificationService?.ShowInfo("Ошибка сохранения записи", message);
+        ShowNotification("Ошибка сохранения записи", message);
         SetRecordingState(false, message);
         SetStatus(message);
     }
@@ -457,6 +462,26 @@ public partial class App : System.Windows.Application
     private void RecordingCoordinator_StopPromptRequired(object? sender, RecordingSession session)
     {
         Dispatcher.BeginInvoke(() => _ = ShowStopPromptAsync(_shutdown.Token));
+    }
+
+    private void ShowNotification(string title, string message)
+    {
+        if (!_settings.NotificationsEnabled)
+        {
+            return;
+        }
+
+        _notificationService?.ShowInfo(title, message);
+    }
+
+    private void ShowTranscriptionFinishedNotification(TranscriptionJob job)
+    {
+        if (!_settings.NotificationsEnabled)
+        {
+            return;
+        }
+
+        _transcriptionNotificationService?.ShowFinished(job);
     }
 
     private void StopRecordingOnExit()
@@ -519,7 +544,7 @@ public partial class App : System.Windows.Application
             return;
         }
 
-        var dialog = new StopRecordingDialog
+        var dialog = new StopRecordingDialog(StopRecordingPrompt.GetAutoStopTimeout(_settings))
         {
             Owner = _mainWindow
         };
@@ -530,10 +555,11 @@ public partial class App : System.Windows.Application
             var action = StopRecordingPrompt.ResolveAction(dialog.Response);
             if (action == StopRecordingPromptAction.Stop)
             {
+                PrepareRecordingSpeakerCountPrompt();
                 await _recordingCoordinator.ConfirmStopAsync(cancellationToken);
                 SetRecordingState(false, "Запись остановлена. MP3 сохраняется...");
                 SetStatus(dialog.Response == StopRecordingDialogResponse.Timeout
-                    ? "Ответ не выбран 2 минуты. Запись остановлена. MP3 сохраняется..."
+                    ? $"Ответ не выбран {_settings.NoAnswerStopPromptMinutes} мин. Запись остановлена. MP3 сохраняется..."
                     : "Запись остановлена. MP3 сохраняется...");
             }
             else if (action == StopRecordingPromptAction.Delay)
@@ -596,13 +622,13 @@ public partial class App : System.Windows.Application
                 outputFolder,
                 args =>
                 {
-                    _notificationService?.ShowInfo("Запись сохранена", args.SavedOutputPath);
+                    ShowNotification("Запись сохранена", args.SavedOutputPath);
                     SetStatus($"Восстановленная запись сохранена: {args.SavedOutputPath}");
                 },
                 args =>
                 {
                     var message = $"Не удалось восстановить MP3. WAV оставлен: {args.TemporaryWavPath}. Ошибка: {args.Error.Message}";
-                    _notificationService?.ShowInfo("Ошибка восстановления записи", message);
+                    ShowNotification("Ошибка восстановления записи", message);
                     SetStatus(message);
                 },
                 cancellationToken);
@@ -641,6 +667,7 @@ public partial class App : System.Windows.Application
             jobLogWriter);
         _transcriptionQueue.JobsChanged += TranscriptionQueue_JobsChanged;
         await _transcriptionQueue.InitializeAsync(cancellationToken);
+        await TrimTranscriptionHistoryAsync(cancellationToken);
         await RefreshModelListAsync(cancellationToken);
         RefreshTranscriptionJobs();
         RunPendingTranscriptionJobsIfAny(cancellationToken);
@@ -748,10 +775,8 @@ public partial class App : System.Windows.Application
             }
 
             SetModelDownloadProgress(100);
-            SetModelDownloadStatus("Скачивание завершено.");
-            SetStatus(installedModels.Count == 1
-                ? $"Модель установлена и готова: {installedModels[0]}."
-                : $"Модели установлены и готовы: {string.Join(", ", installedModels)}.");
+            SetModelDownloadStatus("");
+            SetStatus("Скачивание модели завершено.");
             await RefreshModelListAsync(downloadCancellation.Token);
             await RetryWaitingForModelJobsAsync(downloadCancellation.Token);
             RunPendingTranscriptionJobsIfAny(downloadCancellation.Token);
@@ -763,7 +788,10 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex)
         {
-            SetStatus(UserFacingErrorMessages.ForModelDownload(ex));
+            var message = UserFacingErrorMessages.ForModelDownload(ex);
+            SetStatus(message);
+            SetModelDownloadStatus(message);
+            SetModelDownloadProgress(0);
         }
         finally
         {
@@ -805,6 +833,27 @@ public partial class App : System.Windows.Application
         CancellationToken cancellationToken)
     {
         var artifacts = new List<ModelInstallArtifact>();
+
+        if (!string.IsNullOrWhiteSpace(model.Download.HuggingFaceRepoId))
+        {
+            SetStatus($"Скачивание Hugging Face snapshot: {model.DisplayName}");
+            SetModelDownloadStatus($"Ожидание Hugging Face token: {model.DisplayName}");
+            var accessToken = model.Download.RequiresAuthorization
+                ? RequestHuggingFaceToken(model, cancellationToken)
+                : null;
+            SetModelDownloadStatus($"Получаю список файлов Hugging Face: {model.DisplayName}");
+            var tempPath = await _modelDownloadService!.DownloadHuggingFaceSnapshotAsync(
+                model,
+                accessToken,
+                progress,
+                cancellationToken);
+            tempPaths.Add(tempPath);
+            artifacts.Add(new ModelInstallArtifact
+            {
+                Path = tempPath,
+                IsDirectory = true
+            });
+        }
 
         if (!string.IsNullOrWhiteSpace(model.Download.Url))
         {
@@ -875,6 +924,27 @@ public partial class App : System.Windows.Application
         return artifacts;
     }
 
+    private string? RequestHuggingFaceToken(ModelCatalogEntry model, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_mainWindow is null)
+        {
+            return null;
+        }
+
+        return Dispatcher.Invoke(() =>
+        {
+            var dialog = new HuggingFaceTokenDialog(model.DisplayName)
+            {
+                Owner = _mainWindow
+            };
+
+            return dialog.ShowDialog() == true
+                ? dialog.Token
+                : throw new OperationCanceledException(cancellationToken);
+        });
+    }
+
     private static string? InferArchiveType(string? declaredArchiveType, string url)
     {
         if (!string.IsNullOrWhiteSpace(declaredArchiveType))
@@ -915,6 +985,10 @@ public partial class App : System.Windows.Application
             if (File.Exists(tempPath))
             {
                 File.Delete(tempPath);
+            }
+            else if (Directory.Exists(tempPath))
+            {
+                Directory.Delete(tempPath, recursive: true);
             }
         }
         catch (IOException)
@@ -1158,6 +1232,13 @@ public partial class App : System.Windows.Application
 
         try
         {
+            var speakerCount = await RequestSpeakerCountForTranscriptionAsync(
+                settings.Transcription.NumSpeakers,
+                cancellationToken);
+            settings = settings with
+            {
+                Transcription = settings.Transcription with { NumSpeakers = speakerCount }
+            };
             SetCurrentSettings(settings);
             var outputDirectory = ResolveTranscriptionOutputDirectory(dialog.FileName, settings.Transcription);
             var diarizationModelId = settings.Transcription.EnableDiarization
@@ -1176,6 +1257,7 @@ public partial class App : System.Windows.Application
                 settings.Transcription.SelectedAsrModelId,
                 diarizationModelId,
                 cancellationToken);
+            await TrimTranscriptionHistoryAsync(cancellationToken);
             RefreshTranscriptionJobs();
             SetStatus("Файл добавлен в очередь транскрибации.");
             _ = RunNextTranscriptionJobAsync(cancellationToken);
@@ -1212,6 +1294,11 @@ public partial class App : System.Windows.Application
 
         try
         {
+            var speakerCount = await TakeRecordingSpeakerCountAsync(
+                transcriptionSettings.NumSpeakers,
+                cancellationToken);
+            transcriptionSettings = transcriptionSettings with { NumSpeakers = speakerCount };
+            SetCurrentTranscriptionSettings(transcriptionSettings);
             var enqueued = await RecordingTranscriptionEnqueuer.EnqueueAsync(
                 session,
                 transcriptionSettings,
@@ -1223,6 +1310,7 @@ public partial class App : System.Windows.Application
                 return;
             }
 
+            await TrimTranscriptionHistoryAsync(cancellationToken);
             RefreshTranscriptionJobs();
             _ = RunNextTranscriptionJobAsync(cancellationToken);
         }
@@ -1255,12 +1343,14 @@ public partial class App : System.Windows.Application
                 }
 
                 await _transcriptionQueue.RunNextAsync(cancellationToken);
-                RefreshTranscriptionJobs();
                 var processedJob = FindTranscriptionJob(nextJobId.Value);
                 if (processedJob?.FinishedAt is not null)
                 {
-                    _transcriptionNotificationService?.ShowFinished(processedJob);
+                    ShowTranscriptionFinishedNotification(processedJob);
                 }
+
+                await TrimTranscriptionHistoryAsync(cancellationToken);
+                RefreshTranscriptionJobs();
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -1295,6 +1385,25 @@ public partial class App : System.Windows.Application
         }
 
         _ = RunNextTranscriptionJobAsync(cancellationToken);
+    }
+
+    private async Task TrimTranscriptionHistoryAsync(CancellationToken cancellationToken)
+    {
+        if (_transcriptionQueue is null)
+        {
+            return;
+        }
+
+        var keepJobId = SelectCurrentTranscriptionJob(_transcriptionQueue.Jobs)?.Id;
+        var jobsToDelete = _transcriptionQueue.Jobs
+            .Where(job => job.Id != keepJobId && job.Status != TranscriptionJobStatus.Running)
+            .Select(job => job.Id)
+            .ToArray();
+
+        foreach (var jobId in jobsToDelete)
+        {
+            await _transcriptionQueue.DeleteAsync(jobId, cancellationToken);
+        }
     }
 
     private bool TryGetSelectedModel(out ModelCatalogEntry model)
@@ -1378,7 +1487,8 @@ public partial class App : System.Windows.Application
             return;
         }
 
-        Dispatcher.BeginInvoke(() => _mainWindow.SetTranscriptionJobs(_transcriptionQueue.Jobs));
+        var currentJob = SelectCurrentTranscriptionJob(_transcriptionQueue.Jobs);
+        Dispatcher.BeginInvoke(() => _mainWindow.SetCurrentTranscriptionJob(currentJob));
     }
 
     private TranscriptionPipeline CreateTranscriptionPipeline(TranscriptionSettings settings)
@@ -1391,10 +1501,20 @@ public partial class App : System.Windows.Application
         var gigaAmWorkerPath = GigaAmWorkerLocator.ResolveWorkerPath(
             AppContext.BaseDirectory,
             GetAppDataPath("Workers"));
+        var pyannoteCommunityWorkerPath = PyannoteCommunityWorkerLocator.ResolveWorkerPath(
+            AppContext.BaseDirectory,
+            GetAppDataPath("Workers"));
         var engines = new Dictionary<string, ITranscriptionEngine>(StringComparer.OrdinalIgnoreCase)
         {
             ["sherpa-onnx"] = new SherpaOnnxTranscriptionEngine(),
             ["gigaam-v3"] = new GigaAmV3TranscriptionEngine(gigaAmWorkerPath, new GigaAmWorkerClient())
+        };
+        var diarizationEngines = new Dictionary<string, IDiarizationEngine>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["sherpa-onnx"] = new DiarizationEngine(),
+            ["pyannote-community-1"] = new PyannoteCommunityDiarizationEngine(
+                pyannoteCommunityWorkerPath,
+                new PyannoteCommunityWorkerClient())
         };
 
         return new TranscriptionPipeline(
@@ -1402,25 +1522,153 @@ public partial class App : System.Windows.Application
             _modelManager,
             new AudioNormalizer(GetAppDataPath("Temp")),
             engines,
-            new DiarizationEngine(),
+            diarizationEngines,
             new TranscriptExporter(),
             settings);
     }
 
     private TranscriptionSettings GetCurrentTranscriptionSettings()
     {
+        if (_mainWindow is not null && !Dispatcher.HasShutdownStarted)
+        {
+            var currentFromUi = Dispatcher.CheckAccess()
+                ? TryReadCurrentTranscriptionSettingsFromUi()
+                : Dispatcher.Invoke(TryReadCurrentTranscriptionSettingsFromUi);
+            if (currentFromUi is not null)
+            {
+                SetCurrentTranscriptionSettings(currentFromUi);
+                return currentFromUi;
+            }
+        }
+
         lock (_settingsGate)
         {
-            return _settings.Transcription;
+            return NormalizeReleaseSettings(_settings).Transcription;
         }
+    }
+
+    private TranscriptionSettings? TryReadCurrentTranscriptionSettingsFromUi()
+    {
+        if (_mainWindow?.TryGetCurrentTranscriptionSettings(out var settings) == true)
+        {
+            return NormalizeReleaseSettings(_settings with { Transcription = settings }).Transcription;
+        }
+
+        return null;
     }
 
     private void SetCurrentSettings(AppSettings settings)
     {
         lock (_settingsGate)
         {
-            _settings = settings;
+            _settings = NormalizeReleaseSettings(settings);
         }
+    }
+
+    private void SetCurrentTranscriptionSettings(TranscriptionSettings transcriptionSettings)
+    {
+        lock (_settingsGate)
+        {
+            _settings = NormalizeReleaseSettings(_settings with { Transcription = transcriptionSettings });
+        }
+    }
+
+    private void PrepareRecordingSpeakerCountPrompt()
+    {
+        var initialSpeakerCount = GetCurrentTranscriptionSettings().NumSpeakers;
+        lock (_speakerCountPromptGate)
+        {
+            _pendingRecordingSpeakerCountTask = RequestSpeakerCountForTranscriptionAsync(
+                initialSpeakerCount,
+                _shutdown.Token);
+        }
+    }
+
+    private async Task<int?> TakeRecordingSpeakerCountAsync(
+        int? initialSpeakerCount,
+        CancellationToken cancellationToken)
+    {
+        Task<int?>? promptTask;
+        lock (_speakerCountPromptGate)
+        {
+            promptTask = _pendingRecordingSpeakerCountTask;
+            _pendingRecordingSpeakerCountTask = null;
+        }
+
+        promptTask ??= RequestSpeakerCountForTranscriptionAsync(initialSpeakerCount, cancellationToken);
+        return await promptTask.WaitAsync(cancellationToken);
+    }
+
+    private Task<int?> RequestSpeakerCountForTranscriptionAsync(
+        int? initialSpeakerCount,
+        CancellationToken cancellationToken)
+    {
+        if (_mainWindow is null || Dispatcher.HasShutdownStarted)
+        {
+            return Task.FromResult(initialSpeakerCount is >= 1 and <= 6 ? initialSpeakerCount : null);
+        }
+
+        return Dispatcher.InvokeAsync(() =>
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return initialSpeakerCount is >= 1 and <= 6 ? initialSpeakerCount : null;
+            }
+
+            var dialog = new SpeakerCountDialog(initialSpeakerCount)
+            {
+                Owner = _mainWindow
+            };
+            dialog.ShowDialog();
+            return dialog.SelectedSpeakerCount;
+        }).Task;
+    }
+
+    private static AppSettings NormalizeReleaseSettings(AppSettings settings)
+    {
+        var selectedAsrModelId = string.Equals(
+            settings.Transcription.SelectedAsrModelId,
+            "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
+            StringComparison.OrdinalIgnoreCase)
+            ? AutorecordDefaults.AsrModelId
+            : settings.Transcription.SelectedAsrModelId;
+
+        return settings with
+        {
+            Transcription = settings.Transcription with
+            {
+                AutoTranscribeAfterRecording = true,
+                SelectedAsrModelId = selectedAsrModelId,
+                EnableDiarization = true,
+                SelectedDiarizationModelId = AutorecordDefaults.DiarizationModelId
+            }
+        };
+    }
+
+    private static TranscriptionJob? SelectCurrentTranscriptionJob(IReadOnlyList<TranscriptionJob> jobs)
+    {
+        return jobs
+            .Where(IsReleaseTranscriptionJob)
+            .Where(job => job.Status == TranscriptionJobStatus.Running)
+            .OrderByDescending(job => job.StartedAt ?? job.CreatedAt)
+            .FirstOrDefault()
+            ?? jobs
+            .Where(IsReleaseTranscriptionJob)
+            .Where(job => job.Status is TranscriptionJobStatus.Pending
+                or TranscriptionJobStatus.WaitingForModel)
+            .OrderByDescending(job => job.CreatedAt)
+            .FirstOrDefault()
+            ?? jobs
+                .Where(IsReleaseTranscriptionJob)
+                .Where(job => job.Status is TranscriptionJobStatus.Completed
+                    or TranscriptionJobStatus.Failed)
+                .OrderByDescending(job => job.FinishedAt ?? job.CreatedAt)
+                .FirstOrDefault();
+    }
+
+    private static bool IsReleaseTranscriptionJob(TranscriptionJob job)
+    {
+        return string.Equals(job.DiarizationModelId, AutorecordDefaults.DiarizationModelId, StringComparison.OrdinalIgnoreCase);
     }
 
     private void SetSelectedModelStatus(string status)

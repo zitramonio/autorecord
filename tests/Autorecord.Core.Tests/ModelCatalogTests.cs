@@ -219,6 +219,52 @@ public sealed class ModelCatalogTests
         Assert.Contains("v3_e2e_rnnt_tokenizer.model", model.Download.EmbeddingUrl, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task BundledCatalogContainsReleaseModels()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "models", "catalog.json");
+
+        var catalog = await ModelCatalog.LoadAsync(path, CancellationToken.None);
+
+        Assert.Equal(
+            ["gigaam-v3-ru-quality", "pyannote-community-1"],
+            catalog.Models.Select(model => model.Id).ToArray());
+        Assert.Single(catalog.GetByType("asr"));
+        Assert.Single(catalog.GetByType("diarization"));
+    }
+
+    [Fact]
+    public async Task BundledCatalogDoesNotOfferParakeetInPublicRelease()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "models", "catalog.json");
+
+        var catalog = await ModelCatalog.LoadAsync(path, CancellationToken.None);
+
+        Assert.DoesNotContain(catalog.Models, model =>
+            model.Id.Contains("parakeet", StringComparison.OrdinalIgnoreCase) ||
+            model.DisplayName.Contains("Parakeet", StringComparison.OrdinalIgnoreCase) ||
+            (model.Download.Url?.Contains("parakeet", StringComparison.OrdinalIgnoreCase) ?? false));
+    }
+
+    [Fact]
+    public async Task BundledCatalogContainsPyannoteCommunity1()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "models", "catalog.json");
+
+        var catalog = await ModelCatalog.LoadAsync(path, CancellationToken.None);
+        var model = catalog.GetRequired("pyannote-community-1");
+
+        Assert.Equal("diarization", model.Type);
+        Assert.Equal("pyannote-community-1", model.Engine);
+        Assert.Equal("pyannote/speaker-diarization-community-1", model.Download.HuggingFaceRepoId);
+        Assert.True(model.Download.RequiresAuthorization);
+        Assert.Contains("config.yaml", model.Install.RequiredFiles);
+        Assert.Contains("segmentation/pytorch_model.bin", model.Install.RequiredFiles);
+        Assert.Contains("embedding/pytorch_model.bin", model.Install.RequiredFiles);
+        Assert.Contains("plda/plda.npz", model.Install.RequiredFiles);
+        Assert.Contains("plda/xvec_transform.npz", model.Install.RequiredFiles);
+    }
+
     private static async Task<string> WriteCatalogAsync(string json)
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "catalog.json");

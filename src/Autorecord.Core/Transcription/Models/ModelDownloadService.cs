@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Net.Http.Headers;
+using System.Text.Json;
 
 namespace Autorecord.Core.Transcription.Models;
 
@@ -8,6 +10,7 @@ public sealed class ModelDownloadService(
     Func<string, long?>? getAvailableFreeSpaceBytes = null)
 {
     private const int BufferSize = 81920;
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<string> DownloadAsync(
         ModelCatalogEntry model,
@@ -89,6 +92,176 @@ public sealed class ModelDownloadService(
         }
     }
 
+    public async Task<string> DownloadHuggingFaceSnapshotAsync(
+        ModelCatalogEntry model,
+        string? accessToken,
+        IProgress<ModelDownloadProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(model.Download.HuggingFaceRepoId))
+        {
+            throw new InvalidOperationException($"No Hugging Face repository is configured for model '{model.Id}'.");
+        }
+
+        if (model.Download.RequiresAuthorization && string.IsNullOrWhiteSpace(accessToken))
+        {
+            throw new InvalidOperationException($"Hugging Face access token is required for model '{model.Id}'.");
+        }
+
+        var root = Path.GetFullPath(downloadsRoot);
+        Directory.CreateDirectory(root);
+        var snapshotPath = CreateTempDirectoryPath(root, model.Id);
+
+        try
+        {
+            Directory.CreateDirectory(snapshotPath);
+            var repoId = model.Download.HuggingFaceRepoId.Trim();
+            var revision = string.IsNullOrWhiteSpace(model.Download.HuggingFaceRevision)
+                ? "main"
+                : model.Download.HuggingFaceRevision.Trim();
+            var files = await GetHuggingFaceFilesAsync(repoId, revision, accessToken, cancellationToken);
+            if (files.Count == 0)
+            {
+                throw new InvalidOperationException($"Hugging Face repository '{repoId}' has no files to download.");
+            }
+
+            var totalBytes = files.Sum(file => file.Size ?? 0);
+            EnsureEnoughDiskSpace(root, totalBytes > 0 ? totalBytes : null);
+            var bytesDownloaded = 0L;
+            var stopwatch = Stopwatch.StartNew();
+
+            foreach (var file in files)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var destinationPath = GetContainedChildPath(snapshotPath, file.Path);
+                Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+                var url = BuildHuggingFaceResolveUrl(repoId, revision, file.Path);
+                await DownloadHttpFileAsync(
+                    url,
+                    destinationPath,
+                    accessToken,
+                    file.Size,
+                    downloaded =>
+                    {
+                        var reported = bytesDownloaded + downloaded;
+                        progress?.Report(new ModelDownloadProgress
+                        {
+                            BytesDownloaded = reported,
+                            TotalBytes = totalBytes > 0 ? totalBytes : null,
+                            BytesPerSecond = CalculateBytesPerSecond(reported, stopwatch.Elapsed)
+                        });
+                    },
+                    cancellationToken);
+                bytesDownloaded += new FileInfo(destinationPath).Length;
+            }
+
+            progress?.Report(new ModelDownloadProgress
+            {
+                BytesDownloaded = bytesDownloaded,
+                TotalBytes = totalBytes > 0 ? totalBytes : bytesDownloaded,
+                BytesPerSecond = CalculateBytesPerSecond(bytesDownloaded, stopwatch.Elapsed)
+            });
+            return snapshotPath;
+        }
+        catch
+        {
+            DeleteTempDirectory(snapshotPath);
+            throw;
+        }
+    }
+
+    private async Task<IReadOnlyList<HuggingFaceTreeEntry>> GetHuggingFaceFilesAsync(
+        string repoId,
+        string revision,
+        string? accessToken,
+        CancellationToken cancellationToken)
+    {
+        var url = $"https://huggingface.co/api/models/{repoId}/tree/{Uri.EscapeDataString(revision)}?recursive=1";
+        using var response = await SendGetAsync(url, accessToken, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(
+                $"Hugging Face model listing failed with HTTP {(int)response.StatusCode} ({response.StatusCode}).");
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        var entries = await JsonSerializer.DeserializeAsync<IReadOnlyList<HuggingFaceTreeEntry>>(
+            stream,
+            JsonOptions,
+            cancellationToken) ?? [];
+
+        return entries
+            .Where(entry => string.Equals(entry.Type, "file", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(entry.Path))
+            .Select(entry => entry with { Path = entry.Path.Trim().Replace('\\', '/') })
+            .ToArray();
+    }
+
+    private async Task DownloadHttpFileAsync(
+        string url,
+        string destinationPath,
+        string? accessToken,
+        long? expectedBytes,
+        Action<long> reportFileBytesDownloaded,
+        CancellationToken cancellationToken)
+    {
+        using var response = await SendGetAsync(url, accessToken, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(
+                $"Model download failed with HTTP {(int)response.StatusCode} ({response.StatusCode}).");
+        }
+
+        await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var destination = new FileStream(
+            destinationPath,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            BufferSize,
+            useAsync: true);
+
+        var buffer = new byte[BufferSize];
+        var bytesDownloaded = 0L;
+        while (true)
+        {
+            var bytesRead = await source.ReadAsync(buffer, cancellationToken);
+            if (bytesRead == 0)
+            {
+                break;
+            }
+
+            await destination.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+            bytesDownloaded += bytesRead;
+            reportFileBytesDownloaded(bytesDownloaded);
+        }
+
+        if (expectedBytes is > 0 && bytesDownloaded != expectedBytes.Value)
+        {
+            throw new InvalidOperationException(
+                $"Downloaded file size mismatch. Expected {expectedBytes.Value} bytes, got {bytesDownloaded} bytes.");
+        }
+    }
+
+    private async Task<HttpResponseMessage> SendGetAsync(
+        string url,
+        string? accessToken,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.UserAgent.ParseAdd("Autorecord/1.0");
+        if (!string.IsNullOrWhiteSpace(accessToken))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken.Trim());
+        }
+
+        return await httpClient.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+    }
+
     private void EnsureEnoughDiskSpace(string root, long? requiredBytes)
     {
         if (requiredBytes is not > 0)
@@ -152,6 +325,42 @@ public sealed class ModelDownloadService(
         return path;
     }
 
+    private static string CreateTempDirectoryPath(string root, string modelId)
+    {
+        var directoryName = $"{SanitizeFileNamePart(modelId)}.{Guid.NewGuid():N}.snapshot";
+        return GetContainedChildPath(root, directoryName);
+    }
+
+    private static string GetContainedChildPath(string root, string relativePath)
+    {
+        if (Path.IsPathRooted(relativePath))
+        {
+            throw new InvalidOperationException("Generated download path is outside downloads root.");
+        }
+
+        var fullRoot = Path.GetFullPath(root);
+        var fullPath = Path.GetFullPath(Path.Combine(fullRoot, relativePath));
+        var normalizedRoot = Path.TrimEndingDirectorySeparator(fullRoot);
+        if (!fullPath.StartsWith(normalizedRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Generated download path is outside downloads root.");
+        }
+
+        return fullPath;
+    }
+
+    private static string BuildHuggingFaceResolveUrl(string repoId, string revision, string filePath)
+    {
+        return $"https://huggingface.co/{EscapePath(repoId)}/resolve/{Uri.EscapeDataString(revision)}/{EscapePath(filePath)}";
+    }
+
+    private static string EscapePath(string path)
+    {
+        return string.Join(
+            "/",
+            path.Split('/', StringSplitOptions.RemoveEmptyEntries).Select(Uri.EscapeDataString));
+    }
+
     private static string SanitizeFileNamePart(string value)
     {
         var invalidChars = Path.GetInvalidFileNameChars();
@@ -187,5 +396,29 @@ public sealed class ModelDownloadService(
         catch (UnauthorizedAccessException)
         {
         }
+    }
+
+    private static void DeleteTempDirectory(string tempPath)
+    {
+        try
+        {
+            if (Directory.Exists(tempPath))
+            {
+                Directory.Delete(tempPath, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
+    private sealed record HuggingFaceTreeEntry
+    {
+        public string Path { get; init; } = "";
+        public string Type { get; init; } = "";
+        public long? Size { get; init; }
     }
 }

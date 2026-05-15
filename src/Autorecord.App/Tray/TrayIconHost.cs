@@ -15,7 +15,7 @@ public sealed class TrayIconHost : IDisposable
         _icon = new Forms.NotifyIcon
         {
             Text = "Autorecord",
-            Icon = System.Drawing.SystemIcons.Application,
+            Icon = AppIconProvider.LoadTrayIcon(),
             Visible = true,
             ContextMenuStrip = BuildMenu()
         };

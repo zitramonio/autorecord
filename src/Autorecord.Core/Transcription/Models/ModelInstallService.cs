@@ -39,7 +39,11 @@ public sealed class ModelInstallService(ModelManager modelManager)
                 var sha256 = string.IsNullOrWhiteSpace(artifact.Sha256)
                     ? i == 0 ? model.Download.Sha256 : null
                     : artifact.Sha256;
-                await VerifySha256Async(artifact.Path, sha256, cancellationToken);
+                if (!artifact.IsDirectory)
+                {
+                    await VerifySha256Async(artifact.Path, sha256, cancellationToken);
+                }
+
                 await InstallArtifactAsync(artifact, stagingPath, cancellationToken);
             }
 
@@ -72,6 +76,12 @@ public sealed class ModelInstallService(ModelManager modelManager)
         string stagingPath,
         CancellationToken cancellationToken)
     {
+        if (artifact.IsDirectory)
+        {
+            await CopyDirectoryAsync(artifact.Path, stagingPath, cancellationToken);
+            return;
+        }
+
         var archiveType = artifact.ArchiveType?.Trim();
         if (string.IsNullOrWhiteSpace(archiveType))
         {
@@ -92,6 +102,35 @@ public sealed class ModelInstallService(ModelManager modelManager)
         }
 
         throw new InvalidOperationException($"Unsupported model archive type '{archiveType}'.");
+    }
+
+    private static async Task CopyDirectoryAsync(
+        string sourcePath,
+        string stagingPath,
+        CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(sourcePath))
+        {
+            throw new DirectoryNotFoundException($"Model artifact directory does not exist: {sourcePath}");
+        }
+
+        foreach (var filePath in Directory.EnumerateFiles(sourcePath, "*", SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var relativePath = Path.GetRelativePath(sourcePath, filePath);
+            var destinationPath = GetContainedChildPath(stagingPath, relativePath);
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(destinationPath)!);
+            await using var source = File.OpenRead(filePath);
+            await using var destination = new FileStream(
+                destinationPath,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.None,
+                bufferSize: 81920,
+                useAsync: true);
+            await source.CopyToAsync(destination, cancellationToken);
+        }
     }
 
     private static async Task CopyPlainFileAsync(

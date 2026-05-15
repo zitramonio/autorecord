@@ -1,9 +1,52 @@
 # Проект
 
 - Название: autorecord.
-- Цель: Windows-приложение для автоматической записи микрофона и системного звука во время встреч из Яндекс.Календаря.
-- Стек: .NET WPF, NAudio, iCal-ссылка Яндекс.Календаря, Windows Task Scheduler.
+- Цель: Windows-приложение для автоматической записи микрофона и системного звука во время встреч, с локальной транскрибацией и диаризацией.
+- Стек: .NET WPF, NAudio, iCal-ссылка Яндекс.Календаря, Windows Task Scheduler, GigaAM worker, Pyannote Community worker.
 - Текущая структура:
   - `context/` — проектный контекст.
   - `docs/superpowers/specs/2026-05-06-autorecord-design.md` — утвержденная дизайн-спека MVP.
   - `docs/superpowers/plans/2026-05-06-autorecord-mvp.md` — план реализации MVP.
+  - `src/Autorecord.App/` — WPF UI, настройки, диалоги, запуск записи/транскрибации.
+  - `src/Autorecord.App/Assets/AppIcon.ico` — иконка exe/window/tray.
+  - `src/Autorecord.App/Resources/Buttons/` — XAML-стили и векторные иконки кнопок записи.
+  - `src/Autorecord.Core/Audio/` — NAudio recorder и audio capture sessions.
+  - `src/Autorecord.Core/Transcription/` — очередь/пайплайн/экспорт транскриптов/модели/движки.
+  - `tools/gigaam-worker/` — локальный worker для GigaAM.
+  - `tools/pyannote-community-worker/` — локальный worker для Pyannote Community-1.
+  - `tools/installer/` — source самораспаковывающегося installer stub.
+  - `scripts/package-installer.ps1` — сборка installer с текущим publish и bundled GigaAM.
+- Запуск:
+  - основной ярлык: `C:\Projects\autorecord\Autorecord.lnk`.
+  - publish exe: `C:\Projects\autorecord\.worktrees\mvp\artifacts\publish\Autorecord\Autorecord.App.exe`.
+- Выходные файлы записи:
+  - основной файл: combined MP3 `*.mp3`;
+  - техническая дорожка микрофона: `*.mic.wav`;
+  - техническая дорожка системного звука: `*.system.wav`;
+  - автотранскрибация пока использует основной combined MP3 и публичную ASR-модель `GigaAM v3`.
+- Installer:
+  - setup exe: `C:\Projects\autorecord\.worktrees\mvp\artifacts\installer\Autorecord-Setup-WithModels-AboutContact.exe`.
+  - public setup shortcut: `C:\Projects\autorecord\Autorecord-Public-Setup.lnk` points to AboutContact setup.
+  - включает модель `gigaam-v3-ru-quality` (`GigaAM v3`).
+  - не включает `pyannote-community-1`: пользователь скачивает модель диаризации из Hugging Face по token после принятия условий доступа.
+  - WinForms wizard без console window: лицензия, папка установки, progress, финальный экран с `Открыть Autorecord`.
+  - self-contained one-file `.exe`; startup can take several seconds because bundled model payload is embedded.
+  - при выборе `C:\Program Files` сразу показывает `C:\Program Files\Autorecord`, устанавливает туда и запрашивает UAC для защищённых путей.
+  - актуальный setup пересобран после UX-правок; payload проверен на отсутствие Parakeet и `pyannote-community-1`.
+- Модели:
+  - ASR по умолчанию: `gigaam-v3-ru-quality` (`GigaAM v3`).
+  - Диаризация: `pyannote-community-1`, скачивается пользователем через Hugging Face.
+  - Parakeet убран из публичного каталога и не предлагается пользователю.
+- Главный экран:
+  - стартовый размер окна `760x720`, минимальный размер `640x520`, окно можно уменьшать/увеличивать;
+  - вкладка `Запись` имеет вертикальный scroll для маленького размера окна;
+  - календарный автостарт можно отключить без удаления iCal-ссылки;
+  - автоостановку по тишине можно отключить;
+  - timeout бездействия в stop prompt настраивается пользователем;
+  - всплывающие уведомления можно отключить.
+- Hugging Face token dialog:
+  - uses bundled screenshots `src\Autorecord.App\Assets\HuggingFace\hf1.png`-`hf8.png`;
+  - invalid token status text: `Ошибка - неверный токен`.
+- Вкладка `О программе`:
+  - содержит лицензии моделей, предупреждение о записи и кликабельные ссылки;
+  - внизу показывает контакт для предложений и пожеланий: `zitramonio@proton.me` как `mailto:`-ссылку.

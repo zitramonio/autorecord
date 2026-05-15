@@ -1,13 +1,22 @@
 using Autorecord.App.Dialogs;
+using Autorecord.Core.Settings;
 
 namespace Autorecord.Core.Tests;
 
 public sealed class StopRecordingPromptTests
 {
     [Fact]
-    public void AutoStopTimeoutIsTwoMinutes()
+    public void AutoStopTimeoutUsesDefaultSetting()
     {
-        Assert.Equal(TimeSpan.FromMinutes(2), StopRecordingPrompt.AutoStopTimeout);
+        Assert.Equal(TimeSpan.FromMinutes(2), StopRecordingPrompt.GetAutoStopTimeout(new AppSettings()));
+    }
+
+    [Fact]
+    public void AutoStopTimeoutUsesConfiguredMinutes()
+    {
+        Assert.Equal(
+            TimeSpan.FromMinutes(3),
+            StopRecordingPrompt.GetAutoStopTimeout(new AppSettings { NoAnswerStopPromptMinutes = 3 }));
     }
 
     [Theory]

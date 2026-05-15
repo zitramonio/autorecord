@@ -44,6 +44,28 @@ public sealed class SherpaOnnxTranscriptionEngineTests
     }
 
     [Fact]
+    public async Task TranscribeAsyncThrowsWhenParakeetJoinerFileIsMissing()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(root, "tokens.txt"), "test");
+            await File.WriteAllTextAsync(Path.Combine(root, "encoder.int8.onnx"), "test");
+            await File.WriteAllTextAsync(Path.Combine(root, "decoder.int8.onnx"), "test");
+            var engine = new SherpaOnnxTranscriptionEngine();
+
+            var exception = await Assert.ThrowsAsync<FileNotFoundException>(
+                () => engine.TranscribeAsync("normalized.wav", root, new Progress<int>(), CancellationToken.None));
+
+            Assert.Contains("joiner.int8.onnx", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public async Task TranscribeAsyncHonorsCancellationBeforeValidation()
     {
         var root = CreateTempDirectory();
@@ -85,6 +107,67 @@ public sealed class SherpaOnnxTranscriptionEngineTests
             Assert.Equal(
                 [(0d, 20d, "first"), (20d, 40d, "second"), (40d, 45d, "third")],
                 result.Segments.Select(segment => (segment.Start, segment.End, segment.Text)));
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task TranscribeAsyncProcessesRequestedIntervalsOnly()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            CreateRequiredModelFiles(root);
+            var wavPath = Path.Combine(root, "long.wav");
+            CreatePcm16MonoWav(wavPath, durationSeconds: 45);
+
+            var decoder = new RecordingChunkDecoder("first", "second");
+            var engine = new SherpaOnnxTranscriptionEngine(new RecordingChunkDecoderFactory(decoder));
+            var progress = new CollectingProgress();
+
+            var result = await engine.TranscribeAsync(
+                wavPath,
+                root,
+                [new TranscriptionEngineInterval(5, 7), new TranscriptionEngineInterval(30, 45)],
+                progress,
+                CancellationToken.None);
+
+            Assert.Equal([2.5, 15.25], decoder.SampleCounts.Select(count => count / 16_000d));
+            Assert.Equal([0, 11, 100], progress.Values);
+            Assert.Equal(
+                [(5d, 7d, "first"), (30d, 45d, "second")],
+                result.Segments.Select(segment => (segment.Start, segment.End, segment.Text)));
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task TranscribeAsyncUsesParakeetTransducerFilesWhenPresent()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            CreateParakeetModelFiles(root);
+            var wavPath = Path.Combine(root, "short.wav");
+            CreatePcm16MonoWav(wavPath, durationSeconds: 5);
+
+            var decoder = new RecordingChunkDecoder("done");
+            var factory = new RecordingChunkDecoderFactory(decoder);
+            var engine = new SherpaOnnxTranscriptionEngine(factory);
+
+            var result = await engine.TranscribeAsync(wavPath, root, new Progress<int>(), CancellationToken.None);
+
+            Assert.Equal(SherpaOnnxModelKind.Transducer, factory.CreatedModelFiles?.Kind);
+            Assert.EndsWith("encoder.int8.onnx", factory.CreatedModelFiles?.EncoderPath, StringComparison.OrdinalIgnoreCase);
+            Assert.EndsWith("decoder.int8.onnx", factory.CreatedModelFiles?.DecoderPath, StringComparison.OrdinalIgnoreCase);
+            Assert.EndsWith("joiner.int8.onnx", factory.CreatedModelFiles?.JoinerPath, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("done", Assert.Single(result.Segments).Text);
         }
         finally
         {
@@ -167,6 +250,14 @@ public sealed class SherpaOnnxTranscriptionEngineTests
         File.WriteAllText(Path.Combine(root, "model.int8.onnx"), "test");
     }
 
+    private static void CreateParakeetModelFiles(string root)
+    {
+        File.WriteAllText(Path.Combine(root, "tokens.txt"), "test");
+        File.WriteAllText(Path.Combine(root, "encoder.int8.onnx"), "test");
+        File.WriteAllText(Path.Combine(root, "decoder.int8.onnx"), "test");
+        File.WriteAllText(Path.Combine(root, "joiner.int8.onnx"), "test");
+    }
+
     private static void CreatePcm16MonoWav(string path, int durationSeconds)
     {
         const int sampleRate = 16_000;
@@ -211,8 +302,11 @@ public sealed class SherpaOnnxTranscriptionEngineTests
 
     private sealed class RecordingChunkDecoderFactory(RecordingChunkDecoder decoder) : ISherpaOnnxChunkDecoderFactory
     {
-        public ISherpaOnnxChunkDecoder Create(string tokensPath, string onnxModelPath)
+        public SherpaOnnxModelFiles? CreatedModelFiles { get; private set; }
+
+        public ISherpaOnnxChunkDecoder Create(SherpaOnnxModelFiles modelFiles)
         {
+            CreatedModelFiles = modelFiles;
             return decoder;
         }
     }

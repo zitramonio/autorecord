@@ -337,6 +337,41 @@ public sealed class ModelInstallServiceTests
             new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true });
     }
 
+    [Fact]
+    public async Task InstallAsyncCopiesDirectoryArtifact()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var snapshotPath = Path.Combine(root, "snapshot");
+            Directory.CreateDirectory(Path.Combine(snapshotPath, "segmentation"));
+            await File.WriteAllTextAsync(Path.Combine(snapshotPath, "config.yaml"), "pipeline");
+            await File.WriteAllTextAsync(Path.Combine(snapshotPath, "segmentation", "pytorch_model.bin"), "model");
+            var service = new ModelInstallService(new ModelManager(root));
+            var model = CreateModel(
+                "pyannote-community-1",
+                "pyannote-community-1",
+                archiveType: null,
+                requiredFiles: ["config.yaml", "segmentation/pytorch_model.bin"]);
+
+            var entry = await service.InstallAsync(
+                model,
+                [new ModelInstallArtifact { Path = snapshotPath, IsDirectory = true }],
+                CancellationToken.None);
+
+            Assert.Equal(ModelInstallStatus.Installed, entry.Status);
+            Assert.True(File.Exists(Path.Combine(root, "pyannote-community-1", "config.yaml")));
+            Assert.True(File.Exists(Path.Combine(root, "pyannote-community-1", "segmentation", "pytorch_model.bin")));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
     private static string CreateTempRoot()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));

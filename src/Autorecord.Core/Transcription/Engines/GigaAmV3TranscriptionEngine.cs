@@ -1,6 +1,6 @@
 namespace Autorecord.Core.Transcription.Engines;
 
-public sealed class GigaAmV3TranscriptionEngine : ITranscriptionEngine
+public sealed class GigaAmV3TranscriptionEngine : ISegmentedTranscriptionEngine
 {
     private readonly string _workerPath;
     private readonly GigaAmWorkerClient _client;
@@ -33,6 +33,48 @@ public sealed class GigaAmV3TranscriptionEngine : ITranscriptionEngine
         {
             progress.Report(0);
             var result = await _client.RunAsync(_workerPath, normalizedWavPath, modelPath, outputJsonPath, cancellationToken);
+            progress.Report(100);
+            return result;
+        }
+        finally
+        {
+            if (File.Exists(outputJsonPath))
+            {
+                File.Delete(outputJsonPath);
+            }
+        }
+    }
+
+    public async Task<TranscriptionEngineResult> TranscribeAsync(
+        string normalizedWavPath,
+        string modelPath,
+        IReadOnlyList<TranscriptionEngineInterval> intervals,
+        IProgress<int> progress,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(intervals);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!File.Exists(_workerPath))
+        {
+            throw new FileNotFoundException("GigaAM worker is not installed.", _workerPath);
+        }
+
+        if (!Directory.Exists(modelPath))
+        {
+            throw new DirectoryNotFoundException($"GigaAM model folder is not installed: {modelPath}");
+        }
+
+        var outputJsonPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.json");
+        try
+        {
+            progress.Report(0);
+            var result = await _client.RunAsync(
+                _workerPath,
+                normalizedWavPath,
+                modelPath,
+                outputJsonPath,
+                intervals,
+                cancellationToken);
             progress.Report(100);
             return result;
         }

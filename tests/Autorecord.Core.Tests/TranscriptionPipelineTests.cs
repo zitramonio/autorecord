@@ -98,6 +98,47 @@ public sealed class TranscriptionPipelineTests
     }
 
     [Fact]
+    public async Task RunAsyncThrowsWhenDiarizationEngineIsNotRegistered()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var inputPath = Path.Combine(root, "meeting.wav");
+            CreateSilentWav(inputPath, new WaveFormat(16_000, 16, 1));
+            var catalog = await CreateCatalogAsync(root);
+            InstallModel(root, "asr-fast");
+            InstallModel(root, "diarization-fast");
+            var pipeline = new TranscriptionPipeline(
+                catalog,
+                new ModelManager(Path.Combine(root, "models")),
+                new AudioNormalizer(Path.Combine(root, "normalized")),
+                new Dictionary<string, ITranscriptionEngine>
+                {
+                    ["fake-asr"] = new FakeTranscriptionEngine()
+                },
+                new Dictionary<string, IDiarizationEngine>(),
+                new TranscriptExporter(),
+                new TranscriptionSettings
+                {
+                    EnableDiarization = true,
+                    OutputFormats = [TranscriptOutputFormat.Txt]
+                });
+
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => pipeline.RunAsync(
+                    CreateJob(inputPath, Path.Combine(root, "out"), "asr-fast", "diarization-fast"),
+                    new Progress<int>(),
+                    CancellationToken.None));
+
+            Assert.Contains("fake-diarization", error.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public async Task RunAsyncCompletesAndExportsNoSpeechTranscriptWhenAsrTextIsBlank()
     {
         var root = CreateTempRoot();
@@ -119,6 +160,7 @@ public sealed class TranscriptionPipelineTests
                 new FakeDiarizationEngine(),
                 new TranscriptionSettings
                 {
+                    EnableDiarization = false,
                     OutputFormats = [TranscriptOutputFormat.Txt, TranscriptOutputFormat.Json],
                     OverwriteExistingTranscripts = true
                 });
@@ -356,6 +398,65 @@ public sealed class TranscriptionPipelineTests
     }
 
     [Fact]
+    public async Task RunAsyncUsesDiarizationTurnsAsAsrRangesWhenEngineSupportsIt()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var inputPath = Path.Combine(root, "meeting.wav");
+            var outputDirectory = Path.Combine(root, "out");
+            CreateSilentWav(inputPath, new WaveFormat(16_000, 16, 1));
+            var catalog = await CreateCatalogAsync(root);
+            InstallModel(root, "asr-fast");
+            InstallModel(root, "diarization-fast");
+            var asr = new FakeSegmentedTranscriptionEngine();
+            var diarization = new FakeDiarizationEngine
+            {
+                Turns =
+                [
+                    new DiarizationTurn(0.0, 1.0, "SPEAKER_00"),
+                    new DiarizationTurn(1.2, 2.0, "SPEAKER_01")
+                ]
+            };
+            var pipeline = CreatePipeline(
+                root,
+                catalog,
+                new Dictionary<string, ITranscriptionEngine> { ["fake-asr"] = asr },
+                diarization,
+                new TranscriptionSettings
+                {
+                    EnableDiarization = true,
+                    OutputFormats = [TranscriptOutputFormat.Json],
+                    OverwriteExistingTranscripts = true
+                });
+
+            await pipeline.RunAsync(
+                CreateJob(inputPath, outputDirectory, "asr-fast", "diarization-fast"),
+                new Progress<int>(),
+                CancellationToken.None);
+
+            Assert.Equal(0, asr.FullFileCallCount);
+            Assert.Equal(1, asr.SegmentedCallCount);
+            Assert.Equal(
+                [(0.0, 1.0), (1.2, 2.0)],
+                asr.LastIntervals.Select(interval => (interval.Start, interval.End)));
+
+            await using var stream = File.OpenRead(Path.Combine(outputDirectory, "meeting.json"));
+            using var json = await JsonDocument.ParseAsync(stream);
+            var segments = json.RootElement.GetProperty("segments").EnumerateArray().ToList();
+            Assert.Equal(2, segments.Count);
+            Assert.Equal("Speaker 1", segments[0].GetProperty("speakerLabel").GetString());
+            Assert.Equal("Первая реплика.", segments[0].GetProperty("text").GetString());
+            Assert.Equal("Speaker 2", segments[1].GetProperty("speakerLabel").GetString());
+            Assert.Equal("Вторая реплика.", segments[1].GetProperty("text").GetString());
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public async Task RunAsyncDeletesTemporaryNormalizedWavAfterSuccessWhenConfigured()
     {
         var root = CreateTempRoot();
@@ -373,6 +474,7 @@ public sealed class TranscriptionPipelineTests
                 new FakeDiarizationEngine(),
                 new TranscriptionSettings
                 {
+                    EnableDiarization = false,
                     OutputFormats = [TranscriptOutputFormat.Txt],
                     KeepIntermediateFiles = false,
                     OverwriteExistingTranscripts = true
@@ -412,6 +514,7 @@ public sealed class TranscriptionPipelineTests
                 new FakeDiarizationEngine(),
                 new TranscriptionSettings
                 {
+                    EnableDiarization = false,
                     OutputFormats = [TranscriptOutputFormat.Txt],
                     KeepIntermediateFiles = true,
                     OverwriteExistingTranscripts = true
@@ -450,6 +553,7 @@ public sealed class TranscriptionPipelineTests
                 new FakeDiarizationEngine(),
                 new TranscriptionSettings
                 {
+                    EnableDiarization = false,
                     OutputFormats = [TranscriptOutputFormat.Txt],
                     KeepIntermediateFiles = false,
                     OverwriteExistingTranscripts = true
@@ -522,7 +626,10 @@ public sealed class TranscriptionPipelineTests
             new ModelManager(Path.Combine(root, "models")),
             new AudioNormalizer(Path.Combine(root, "normalized")),
             asrEngines,
-            diarizationEngine,
+            new Dictionary<string, IDiarizationEngine>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["fake-diarization"] = diarizationEngine
+            },
             new TranscriptExporter(),
             settings);
     }
@@ -656,10 +763,50 @@ public sealed class TranscriptionPipelineTests
         }
     }
 
+    private sealed class FakeSegmentedTranscriptionEngine : ISegmentedTranscriptionEngine
+    {
+        public int FullFileCallCount { get; private set; }
+        public int SegmentedCallCount { get; private set; }
+        public IReadOnlyList<TranscriptionEngineInterval> LastIntervals { get; private set; } = [];
+
+        public Task<TranscriptionEngineResult> TranscribeAsync(
+            string normalizedWavPath,
+            string modelPath,
+            IProgress<int> progress,
+            CancellationToken cancellationToken)
+        {
+            FullFileCallCount++;
+            return Task.FromResult(new TranscriptionEngineResult(
+                [new TranscriptionEngineSegment(0.0, 2.0, "Первая реплика. Вторая реплика.", null)]));
+        }
+
+        public Task<TranscriptionEngineResult> TranscribeAsync(
+            string normalizedWavPath,
+            string modelPath,
+            IReadOnlyList<TranscriptionEngineInterval> intervals,
+            IProgress<int> progress,
+            CancellationToken cancellationToken)
+        {
+            SegmentedCallCount++;
+            LastIntervals = intervals.ToArray();
+            var texts = new[] { "Первая реплика.", "Вторая реплика." };
+            var segments = intervals
+                .Select((interval, index) => new TranscriptionEngineSegment(
+                    interval.Start,
+                    interval.End,
+                    texts[index],
+                    null))
+                .ToList();
+
+            return Task.FromResult(new TranscriptionEngineResult(segments));
+        }
+    }
+
     private sealed class FakeDiarizationEngine : IDiarizationEngine
     {
         public int CallCount { get; private set; }
         public bool ReportProgressEdges { get; init; }
+        public IReadOnlyList<DiarizationTurn> Turns { get; init; } = [new DiarizationTurn(0.0, 1.5, "SPEAKER_00")];
 
         public Task<IReadOnlyList<DiarizationTurn>> DiarizeAsync(
             string normalizedWavPath,
@@ -676,7 +823,7 @@ public sealed class TranscriptionPipelineTests
                 progress.Report(100);
             }
 
-            return Task.FromResult<IReadOnlyList<DiarizationTurn>>([new DiarizationTurn(0.0, 1.5, "SPEAKER_00")]);
+            return Task.FromResult(Turns);
         }
     }
 

@@ -51,6 +51,11 @@ public sealed class SettingsStore
             throw new ArgumentOutOfRangeException(nameof(settings), "Retry prompt interval must be positive.");
         }
 
+        if (settings.NoAnswerStopPromptMinutes <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(settings), "No-answer stop prompt interval must be positive.");
+        }
+
         if (!Enum.IsDefined(settings.RecordingMode))
         {
             throw new ArgumentOutOfRangeException(nameof(settings), "Recording mode must be known.");

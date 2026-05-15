@@ -109,4 +109,18 @@ public sealed class ScheduleMonitorTests
 
         Assert.Null(due);
     }
+
+    [Fact]
+    public void DoesNotStartWhenCalendarAutoStartIsDisabled()
+    {
+        var now = new DateTimeOffset(2026, 5, 6, 18, 42, 0, TimeSpan.Zero);
+        var events = new[]
+        {
+            new CalendarEvent("Call", now, now.AddHours(1))
+        };
+
+        var due = ScheduleMonitor.FindDueEvent(events, now, false, autoStartEnabled: false);
+
+        Assert.Null(due);
+    }
 }

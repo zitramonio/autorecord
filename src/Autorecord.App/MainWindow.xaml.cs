@@ -1,5 +1,7 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Windows;
+using System.Windows.Navigation;
 using Autorecord.App.Transcription;
 using Autorecord.Core.Settings;
 using Autorecord.Core.Transcription.Jobs;
@@ -13,6 +15,8 @@ public partial class MainWindow : Window
     private const string NoDiarizationModelId = "";
 
     private AppSettings _settings = new();
+    private Guid? _currentTranscriptionJobId;
+    private bool _isModelDownloadBusy;
 
     public MainWindow()
     {
@@ -40,7 +44,7 @@ public partial class MainWindow : Window
     public bool AllowClose { get; set; }
     public string? SelectedModelId => SelectedAsrModelId;
     public string? SelectedAsrModelId => AsrModelBox.SelectedValue as string;
-    public string? SelectedDiarizationModelId => DiarizationModelBox.SelectedValue as string;
+    public string? SelectedDiarizationModelId => AutorecordDefaults.DiarizationModelId;
 
     public void SetSettings(AppSettings settings)
     {
@@ -66,29 +70,23 @@ public partial class MainWindow : Window
         IReadOnlyList<ModelListItemViewModel> asrModels,
         IReadOnlyList<ModelListItemViewModel> diarizationModels)
     {
-        var selectedModelId = SelectedAsrModelId ?? _settings.Transcription.SelectedAsrModelId;
+        var selectedModelId = _settings.Transcription.SelectedAsrModelId;
         AsrModelBox.ItemsSource = asrModels;
         AsrModelBox.SelectedValue = asrModels.Any(model => model.Id == selectedModelId)
             ? selectedModelId
             : asrModels.FirstOrDefault()?.Id;
 
-        var selectedDiarizationModelId = SelectedDiarizationModelId
-            ?? (_settings.Transcription.EnableDiarization
-                ? _settings.Transcription.SelectedDiarizationModelId
-                : NoDiarizationModelId);
-        var diarizationOptions = new[]
-            {
-                new ModelListItemViewModel(NoDiarizationModelId, "Без разделения по спикерам", "diarization", "")
-            }
-            .Concat(diarizationModels)
-            .ToArray();
+        var selectedDiarizationModelId = AutorecordDefaults.DiarizationModelId;
+        var diarizationOptions = diarizationModels.ToArray();
         DiarizationModelBox.ItemsSource = diarizationOptions;
         DiarizationModelBox.SelectedValue = diarizationOptions.Any(model => model.Id == selectedDiarizationModelId)
             ? selectedDiarizationModelId
-            : NoDiarizationModelId;
+            : diarizationOptions.FirstOrDefault()?.Id;
 
         UpdateSelectedModelStatus();
+        UpdateAsrModelSummary();
         UpdateDiarizationControlsState();
+        UpdateModelManagementVisibility();
     }
 
     public void SetSelectedModelStatus(string status)
@@ -114,18 +112,44 @@ public partial class MainWindow : Window
 
     public void SetModelDownloadBusy(bool isDownloading)
     {
+        _isModelDownloadBusy = isDownloading;
         DownloadModelButton.IsEnabled = !isDownloading;
         CancelDownloadModelButton.IsEnabled = isDownloading;
         DeleteModelButton.IsEnabled = !isDownloading;
         ValidateModelButton.IsEnabled = !isDownloading;
+        UpdateModelManagementVisibility();
     }
 
-    public void SetTranscriptionJobs(IReadOnlyList<TranscriptionJob> jobs)
+    public void SetCurrentTranscriptionJob(TranscriptionJob? job)
     {
-        TranscriptionJobsGrid.ItemsSource = jobs
-            .OrderByDescending(job => job.CreatedAt)
-            .Select(TranscriptionJobListItemViewModel.FromJob)
-            .ToArray();
+        if (job is null)
+        {
+            _currentTranscriptionJobId = null;
+            CurrentTranscriptionFileText.Text = "Файл не выбран";
+            CurrentTranscriptionModelText.Text = "Модель: GigaAM v3; диаризация: Pyannote Community-1";
+            CurrentTranscriptionStatusText.Text = "Статус: ожидание";
+            CurrentTranscriptionStagesText.Text = string.Join(Environment.NewLine,
+                "Чтение файла: ожидает",
+                "Диаризация: ожидает",
+                "Транскрибация: ожидает",
+                "Сохранение транскрипта: ожидает");
+            OpenCurrentTranscriptButton.IsEnabled = false;
+            OpenCurrentFolderButton.IsEnabled = false;
+            RetryCurrentTranscriptionButton.IsEnabled = false;
+            CancelCurrentTranscriptionButton.IsEnabled = false;
+            return;
+        }
+
+        var item = TranscriptionJobListItemViewModel.FromJob(job);
+        _currentTranscriptionJobId = job.Id;
+        CurrentTranscriptionFileText.Text = item.File;
+        CurrentTranscriptionModelText.Text = $"Модель: {item.Model}; диаризация: {item.DiarizationModel}";
+        CurrentTranscriptionStatusText.Text = $"Статус: {item.Status}";
+        CurrentTranscriptionStagesText.Text = item.StageLines;
+        OpenCurrentTranscriptButton.IsEnabled = item.CanOpenTranscript;
+        OpenCurrentFolderButton.IsEnabled = item.CanOpenFolder;
+        RetryCurrentTranscriptionButton.IsEnabled = item.CanRetry;
+        CancelCurrentTranscriptionButton.IsEnabled = item.CanCancel;
     }
 
     private void InitializeTranscriptionControls()
@@ -153,9 +177,14 @@ public partial class MainWindow : Window
         return TryReadFromForm(out settings, requireCalendarSettings);
     }
 
+    public bool TryGetCurrentTranscriptionSettings(out TranscriptionSettings settings)
+    {
+        return TryReadTranscriptionSettings(out settings);
+    }
+
     private void RefreshCalendar_Click(object sender, RoutedEventArgs e)
     {
-        if (!TryReadFromForm(out var settings))
+        if (!TryReadFromForm(out var settings, forceCalendarUrl: true))
         {
             return;
         }
@@ -274,13 +303,36 @@ public partial class MainWindow : Window
         RaiseJobAction(sender, DeleteTranscriptionJobRequested);
     }
 
+    private void OpenCurrentTranscript_Click(object sender, RoutedEventArgs e)
+    {
+        RaiseCurrentJobAction(OpenTranscriptionJobTranscriptRequested);
+    }
+
+    private void OpenCurrentFolder_Click(object sender, RoutedEventArgs e)
+    {
+        RaiseCurrentJobAction(OpenTranscriptionJobFolderRequested);
+    }
+
+    private void RetryCurrentTranscription_Click(object sender, RoutedEventArgs e)
+    {
+        RaiseCurrentJobAction(RetryTranscriptionJobRequested);
+    }
+
+    private void CancelCurrentTranscription_Click(object sender, RoutedEventArgs e)
+    {
+        RaiseCurrentJobAction(CancelTranscriptionJobRequested);
+    }
+
     private void AsrModelBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         UpdateSelectedModelStatus();
+        UpdateAsrModelSummary();
+        UpdateModelManagementVisibility();
     }
 
     private void DiarizationModelBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
+        UpdateSelectedModelStatus();
         UpdateDiarizationControlsState();
     }
 
@@ -293,23 +345,26 @@ public partial class MainWindow : Window
     {
         CalendarUrlBox.Text = settings.CalendarUrl;
         OutputFolderBox.Text = settings.OutputFolder;
+        AutoStartRecordingFromCalendarBox.IsChecked = settings.AutoStartRecordingFromCalendar;
         TaggedModeBox.IsChecked = settings.RecordingMode == RecordingMode.TaggedEvents;
         EventTagBox.Text = settings.EventTag;
+        AutoStopRecordingBox.IsChecked = settings.AutoStopRecordingOnSilence;
         SilenceMinutesBox.Text = settings.SilencePromptMinutes.ToString();
         RetryMinutesBox.Text = settings.RetryPromptMinutes.ToString();
+        NoAnswerStopPromptMinutesBox.Text = settings.NoAnswerStopPromptMinutes.ToString();
         KeepMicrophoneReadyBox.IsChecked = settings.KeepMicrophoneReady;
+        NotificationsEnabledBox.IsChecked = settings.NotificationsEnabled;
         StartupBox.IsChecked = settings.StartWithWindows;
-        AutoTranscribeBox.IsChecked = settings.Transcription.AutoTranscribeAfterRecording;
+        AutoTranscribeBox.IsChecked = true;
         if (AsrModelBox.ItemsSource is not null)
         {
             AsrModelBox.SelectedValue = settings.Transcription.SelectedAsrModelId;
+            UpdateAsrModelSummary();
         }
 
         if (DiarizationModelBox.ItemsSource is not null)
         {
-            DiarizationModelBox.SelectedValue = settings.Transcription.EnableDiarization
-                ? settings.Transcription.SelectedDiarizationModelId
-                : NoDiarizationModelId;
+            DiarizationModelBox.SelectedValue = AutorecordDefaults.DiarizationModelId;
         }
 
         SpeakerCountBox.SelectedValue = settings.Transcription.NumSpeakers;
@@ -321,20 +376,28 @@ public partial class MainWindow : Window
         TranscriptJsonFormatBox.IsChecked = settings.Transcription.OutputFormats.Contains(TranscriptOutputFormat.Json);
         UpdateDiarizationControlsState();
         UpdateTranscriptOutputFolderControlsState();
+        UpdateAutoStopControlsState();
         SetRecordingState(false);
     }
 
-    private bool TryReadFromForm(out AppSettings settings, bool requireCalendarSettings = true)
+    private bool TryReadFromForm(
+        out AppSettings settings,
+        bool requireCalendarSettings = true,
+        bool forceCalendarUrl = false)
     {
         settings = _settings;
         var recordingMode = TaggedModeBox.IsChecked == true ? RecordingMode.TaggedEvents : RecordingMode.AllEvents;
+        var autoStartRecordingFromCalendar = AutoStartRecordingFromCalendarBox.IsChecked == true;
+        var autoStopRecordingOnSilence = AutoStopRecordingBox.IsChecked == true;
         var calendarUrl = CalendarUrlBox.Text.Trim();
+        var calendarSettingsRequired = forceCalendarUrl || (requireCalendarSettings && autoStartRecordingFromCalendar);
 
-        if ((requireCalendarSettings && !TryReadRequiredText(CalendarUrlBox.Text, "iCal-ссылка", out calendarUrl)) ||
+        if ((calendarSettingsRequired && !TryReadRequiredText(CalendarUrlBox.Text, "iCal-ссылка", out calendarUrl)) ||
             !TryReadRequiredText(OutputFolderBox.Text, "Папка сохранения", out var outputFolder) ||
-            (requireCalendarSettings && recordingMode == RecordingMode.TaggedEvents && !TryReadRequiredText(EventTagBox.Text, "Метка события", out _)) ||
+            (calendarSettingsRequired && recordingMode == RecordingMode.TaggedEvents && !TryReadRequiredText(EventTagBox.Text, "Метка события", out _)) ||
             !TryReadPositiveMinutes(SilenceMinutesBox.Text, "Минут тишины до запроса", out var silenceMinutes) ||
-            !TryReadPositiveMinutes(RetryMinutesBox.Text, "Минут ожидания после ответа Нет", out var retryMinutes))
+            !TryReadPositiveMinutes(RetryMinutesBox.Text, "Минут ожидания после ответа Нет", out var retryMinutes) ||
+            !TryReadPositiveMinutes(NoAnswerStopPromptMinutesBox.Text, "Минут бездействия до автоответа", out var noAnswerMinutes))
         {
             return false;
         }
@@ -350,8 +413,12 @@ public partial class MainWindow : Window
             OutputFolder = outputFolder,
             RecordingMode = recordingMode,
             EventTag = EventTagBox.Text.Trim(),
+            AutoStartRecordingFromCalendar = autoStartRecordingFromCalendar,
+            AutoStopRecordingOnSilence = autoStopRecordingOnSilence,
             SilencePromptMinutes = silenceMinutes,
             RetryPromptMinutes = retryMinutes,
+            NoAnswerStopPromptMinutes = noAnswerMinutes,
+            NotificationsEnabled = NotificationsEnabledBox.IsChecked == true,
             KeepMicrophoneReady = KeepMicrophoneReadyBox.IsChecked == true,
             StartWithWindows = StartupBox.IsChecked == true,
             Transcription = transcriptionSettings
@@ -428,17 +495,14 @@ public partial class MainWindow : Window
             return false;
         }
 
-        var selectedAsrModelId = SelectedAsrModelId;
-        var (enableDiarization, selectedDiarizationModelId) =
-            MainWindowTranscriptionSettings.ResolveDiarizationSelection(SelectedDiarizationModelId, _settings.Transcription);
         settings = _settings.Transcription with
         {
-            AutoTranscribeAfterRecording = AutoTranscribeBox.IsChecked == true,
-            SelectedAsrModelId = string.IsNullOrWhiteSpace(selectedAsrModelId)
-                ? _settings.Transcription.SelectedAsrModelId
-                : selectedAsrModelId,
-            EnableDiarization = enableDiarization,
-            SelectedDiarizationModelId = selectedDiarizationModelId,
+            AutoTranscribeAfterRecording = true,
+            SelectedAsrModelId = MainWindowTranscriptionSettings.ResolveAsrSelection(
+                AsrModelBox.SelectedValue as string,
+                _settings.Transcription),
+            EnableDiarization = true,
+            SelectedDiarizationModelId = AutorecordDefaults.DiarizationModelId,
             NumSpeakers = SpeakerCountBox.SelectedValue is int numSpeakers ? numSpeakers : null,
             OutputFolderMode = outputFolderMode,
             CustomOutputFolder = string.IsNullOrWhiteSpace(customOutputFolder) ? null : customOutputFolder,
@@ -475,19 +539,20 @@ public partial class MainWindow : Window
 
     private void UpdateSelectedModelStatus()
     {
-        if (AsrModelBox.SelectedItem is ModelListItemViewModel model)
-        {
-            SelectedModelStatusText.Text = $"Статус модели: {model.Status}";
-            return;
-        }
+        SelectedModelStatusText.Text = MainWindowTranscriptionSettings.FormatSelectedModelStatus(
+            AsrModelBox.SelectedItem as ModelListItemViewModel,
+            DiarizationModelBox.SelectedItem as ModelListItemViewModel);
+    }
 
-        SelectedModelStatusText.Text = "Модель не выбрана";
+    private void UpdateAsrModelSummary()
+    {
+        var asrModel = AsrModelBox.SelectedItem as ModelListItemViewModel;
+        AsrModelSummaryText.Text = $"Модель транскрибации: {asrModel?.DisplayName ?? "GigaAM v3"}";
     }
 
     private void UpdateDiarizationControlsState()
     {
-        var enabled = !string.IsNullOrWhiteSpace(SelectedDiarizationModelId);
-        SpeakerCountBox.IsEnabled = enabled;
+        SpeakerCountBox.IsEnabled = true;
     }
 
     private void UpdateTranscriptOutputFolderControlsState()
@@ -495,6 +560,55 @@ public partial class MainWindow : Window
         var customFolderSelected = TranscriptOutputFolderModeBox.SelectedValue is TranscriptOutputFolderMode.CustomFolder;
         CustomTranscriptOutputFolderBox.IsEnabled = customFolderSelected;
         ChooseTranscriptFolderButton.IsEnabled = customFolderSelected;
+    }
+
+    private void CalendarAutoStartBox_Changed(object sender, RoutedEventArgs e)
+    {
+    }
+
+    private void AutoStopRecordingBox_Changed(object sender, RoutedEventArgs e)
+    {
+        UpdateAutoStopControlsState();
+    }
+
+    private void UpdateAutoStopControlsState()
+    {
+        var enabled = AutoStopRecordingBox.IsChecked == true;
+        SilenceMinutesBox.IsEnabled = enabled;
+        RetryMinutesBox.IsEnabled = enabled;
+        NoAnswerStopPromptMinutesBox.IsEnabled = enabled;
+    }
+
+    private void UpdateModelManagementVisibility()
+    {
+        var visibility = MainWindowTranscriptionSettings.ShouldShowModelManagement(
+            AsrModelBox.SelectedItem as ModelListItemViewModel,
+            DiarizationModelBox.SelectedItem as ModelListItemViewModel,
+            _isModelDownloadBusy)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        ModelStatusPanel.Visibility = Visibility.Visible;
+        ModelActionsPanel.Visibility = visibility;
+        DownloadModelButton.Visibility = MainWindowTranscriptionSettings.ShouldShowSpeakerModelDownload(
+            DiarizationModelBox.SelectedItem as ModelListItemViewModel,
+            _isModelDownloadBusy)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        CancelDownloadModelButton.Visibility = _isModelDownloadBusy
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        ModelDownloadProgress.Visibility = _isModelDownloadBusy
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        ModelDownloadDetailsText.Visibility = _isModelDownloadBusy || !string.IsNullOrWhiteSpace(ModelDownloadDetailsText.Text)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private void OpenLink_RequestNavigate(object sender, RequestNavigateEventArgs e)
+    {
+        Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true });
+        e.Handled = true;
     }
 
     private sealed record SpeakerCountOption(string DisplayName, int? Value);
@@ -512,6 +626,16 @@ public partial class MainWindow : Window
 
         handler?.Invoke(this, new TranscriptionJobActionRequestedEventArgs(job.Id));
     }
+
+    private void RaiseCurrentJobAction(EventHandler<TranscriptionJobActionRequestedEventArgs>? handler)
+    {
+        if (_currentTranscriptionJobId is not { } jobId)
+        {
+            return;
+        }
+
+        handler?.Invoke(this, new TranscriptionJobActionRequestedEventArgs(jobId));
+    }
 }
 
 public static class MainWindowTranscriptionSettings
@@ -528,15 +652,22 @@ public static class MainWindowTranscriptionSettings
         return (!string.IsNullOrWhiteSpace(selectedDiarizationModelId), selectedDiarizationModelId);
     }
 
+    public static string ResolveAsrSelection(
+        string? selectedAsrModelId,
+        TranscriptionSettings currentSettings)
+    {
+        return string.IsNullOrWhiteSpace(selectedAsrModelId)
+            ? currentSettings.SelectedAsrModelId
+            : selectedAsrModelId;
+    }
+
     public static IReadOnlyList<string> ResolveSelectedModelIdsForAction(
         string? selectedAsrModelId,
         string? selectedDiarizationModelId,
         TranscriptionSettings currentSettings)
     {
         var modelIds = new List<string>();
-        var asrModelId = string.IsNullOrWhiteSpace(selectedAsrModelId)
-            ? currentSettings.SelectedAsrModelId
-            : selectedAsrModelId;
+        var asrModelId = ResolveAsrSelection(selectedAsrModelId, currentSettings);
         if (!string.IsNullOrWhiteSpace(asrModelId))
         {
             modelIds.Add(asrModelId);
@@ -551,5 +682,46 @@ public static class MainWindowTranscriptionSettings
         }
 
         return modelIds.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    public static string FormatSelectedModelStatus(
+        ModelListItemViewModel? asrModel,
+        ModelListItemViewModel? diarizationModel)
+    {
+        if (asrModel is null)
+        {
+            return "Модель не выбрана";
+        }
+
+        var diarizationStatus = diarizationModel is null || string.IsNullOrWhiteSpace(diarizationModel.Id)
+            ? "выключена"
+            : diarizationModel.Status;
+
+        return $"Статус моделей: ASR — {asrModel.Status}; диаризация — {diarizationStatus}";
+    }
+
+    public static bool ShouldShowModelManagement(
+        ModelListItemViewModel? asrModel,
+        ModelListItemViewModel? diarizationModel,
+        bool isDownloading)
+    {
+        if (isDownloading)
+        {
+            return true;
+        }
+
+        return !IsInstalled(asrModel) || !IsInstalled(diarizationModel);
+    }
+
+    public static bool ShouldShowSpeakerModelDownload(
+        ModelListItemViewModel? diarizationModel,
+        bool isDownloading)
+    {
+        return !isDownloading && !IsInstalled(diarizationModel);
+    }
+
+    private static bool IsInstalled(ModelListItemViewModel? model)
+    {
+        return string.Equals(model?.Status, "Installed", StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -15,8 +15,12 @@ public sealed class SettingsStoreTests
             OutputFolder = "C:\\Records",
             RecordingMode = RecordingMode.TaggedEvents,
             EventTag = "запись",
+            AutoStartRecordingFromCalendar = false,
+            AutoStopRecordingOnSilence = false,
             SilencePromptMinutes = 2,
             RetryPromptMinutes = 10,
+            NoAnswerStopPromptMinutes = 3,
+            NotificationsEnabled = false,
             StartWithWindows = true
         };
 
@@ -65,7 +69,14 @@ public sealed class SettingsStoreTests
 
         Assert.Equal(1, loaded.SilencePromptMinutes);
         Assert.Equal(5, loaded.RetryPromptMinutes);
+        Assert.Equal(2, loaded.NoAnswerStopPromptMinutes);
+        Assert.True(loaded.AutoStartRecordingFromCalendar);
+        Assert.True(loaded.AutoStopRecordingOnSilence);
+        Assert.True(loaded.NotificationsEnabled);
         Assert.Equal(RecordingMode.AllEvents, loaded.RecordingMode);
+        Assert.Equal(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Autorecord"),
+            loaded.OutputFolder);
         Assert.Equal(new TranscriptionSettings(), loaded.Transcription);
     }
 
@@ -82,8 +93,12 @@ public sealed class SettingsStoreTests
               "OutputFolder": "C:\\Records",
               "RecordingMode": 1,
               "EventTag": "record",
+              "AutoStartRecordingFromCalendar": false,
+              "AutoStopRecordingOnSilence": false,
               "SilencePromptMinutes": 2,
               "RetryPromptMinutes": 10,
+              "NoAnswerStopPromptMinutes": 3,
+              "NotificationsEnabled": false,
               "KeepMicrophoneReady": true,
               "StartWithWindows": true
             }
@@ -93,10 +108,16 @@ public sealed class SettingsStoreTests
         var loaded = await store.LoadAsync(CancellationToken.None);
 
         Assert.Equal(new TranscriptionSettings(), loaded.Transcription);
+        Assert.False(loaded.AutoStartRecordingFromCalendar);
+        Assert.False(loaded.AutoStopRecordingOnSilence);
+        Assert.Equal(3, loaded.NoAnswerStopPromptMinutes);
+        Assert.False(loaded.NotificationsEnabled);
         Assert.True(loaded.Transcription.AutoTranscribeAfterRecording);
-        Assert.Equal("sherpa-gigaam-v2-ru-fast", loaded.Transcription.SelectedAsrModelId);
+        Assert.True(loaded.Transcription.EnableDiarization);
+        Assert.Equal("gigaam-v3-ru-quality", loaded.Transcription.SelectedAsrModelId);
+        Assert.Equal("pyannote-community-1", loaded.Transcription.SelectedDiarizationModelId);
         Assert.Equal(
-            [TranscriptOutputFormat.Txt, TranscriptOutputFormat.Markdown, TranscriptOutputFormat.Srt, TranscriptOutputFormat.Json],
+            [TranscriptOutputFormat.Txt],
             loaded.Transcription.OutputFormats);
     }
 
@@ -233,7 +254,8 @@ public sealed class SettingsStoreTests
             """
             {
               "SilencePromptMinutes": 0,
-              "RetryPromptMinutes": 0
+              "RetryPromptMinutes": 0,
+              "NoAnswerStopPromptMinutes": 0
             }
             """);
         var store = new SettingsStore(path);

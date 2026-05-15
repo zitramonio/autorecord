@@ -176,6 +176,76 @@ public sealed class ModelDownloadServiceTests
         Assert.Empty(Directory.GetFiles(root, "*.download"));
     }
 
+    [Fact]
+    public async Task DownloadHuggingFaceSnapshotAsyncDownloadsFilesWithAuthorization()
+    {
+        var root = CreateTempRoot();
+        var requests = new List<HttpRequestMessage>();
+        var service = CreateService(
+            root,
+            request =>
+            {
+                requests.Add(request);
+                if (request.RequestUri?.AbsolutePath == "/api/models/pyannote/speaker-diarization-community-1/tree/main")
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(
+                            """
+                            [
+                              { "path": "config.yaml", "type": "file", "size": 6 },
+                              { "path": "segmentation", "type": "directory" },
+                              { "path": "segmentation/pytorch_model.bin", "type": "file", "size": 5 }
+                            ]
+                            """)
+                    };
+                }
+
+                if (request.RequestUri?.AbsolutePath.EndsWith("/config.yaml", StringComparison.Ordinal) == true)
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new ByteArrayContent("config"u8.ToArray())
+                    };
+                }
+
+                if (request.RequestUri?.AbsolutePath.EndsWith("/segmentation/pytorch_model.bin", StringComparison.Ordinal) == true)
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new ByteArrayContent("model"u8.ToArray())
+                    };
+                }
+
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            });
+        var progress = new List<ModelDownloadProgress>();
+        var model = CreateModel(
+            id: "pyannote-community-1",
+            download: new ModelDownloadInfo
+            {
+                HuggingFaceRepoId = "pyannote/speaker-diarization-community-1",
+                HuggingFaceRevision = "main",
+                RequiresAuthorization = true
+            });
+
+        var snapshotPath = await service.DownloadHuggingFaceSnapshotAsync(
+            model,
+            "hf_token",
+            new CollectingProgress(progress),
+            CancellationToken.None);
+
+        Assert.True(Directory.Exists(snapshotPath));
+        Assert.Equal("config", await File.ReadAllTextAsync(Path.Combine(snapshotPath, "config.yaml")));
+        Assert.Equal("model", await File.ReadAllTextAsync(Path.Combine(snapshotPath, "segmentation", "pytorch_model.bin")));
+        Assert.All(requests, request => Assert.Equal("Bearer", request.Headers.Authorization?.Scheme));
+        Assert.All(requests, request => Assert.Equal("hf_token", request.Headers.Authorization?.Parameter));
+        Assert.NotEmpty(progress);
+        Assert.Equal(11, progress[^1].BytesDownloaded);
+        Assert.Equal(11, progress[^1].TotalBytes);
+        Assert.Equal(100, progress[^1].Percent);
+    }
+
     private static ModelDownloadService CreateService(
         string root,
         Func<HttpRequestMessage, HttpResponseMessage> responseFactory,

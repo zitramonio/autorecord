@@ -7,3 +7,6 @@ __pycache__/
 tools/gigaam-worker/.venv/
 tools/gigaam-worker/build/
 tools/gigaam-worker/*.spec
+tools/pyannote-community-worker/.venv/
+tools/pyannote-community-worker/build/
+tools/pyannote-community-worker/*.spec

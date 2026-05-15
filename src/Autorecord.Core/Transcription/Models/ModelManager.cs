@@ -70,7 +70,8 @@ public sealed class ModelManager
     {
         return string.IsNullOrWhiteSpace(download.Url)
             && string.IsNullOrWhiteSpace(download.SegmentationUrl)
-            && string.IsNullOrWhiteSpace(download.EmbeddingUrl);
+            && string.IsNullOrWhiteSpace(download.EmbeddingUrl)
+            && string.IsNullOrWhiteSpace(download.HuggingFaceRepoId);
     }
 
     private static string GetContainedChildPath(string root, string relativePath, string parameterName)

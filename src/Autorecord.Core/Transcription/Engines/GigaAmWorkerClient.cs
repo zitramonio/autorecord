@@ -25,8 +25,20 @@ public sealed class GigaAmWorkerClient
         string outputJsonPath,
         CancellationToken cancellationToken)
     {
+        return await RunAsync(workerPath, inputPath, modelPath, outputJsonPath, null, cancellationToken);
+    }
+
+    public async Task<TranscriptionEngineResult> RunAsync(
+        string workerPath,
+        string inputPath,
+        string modelPath,
+        string outputJsonPath,
+        IReadOnlyList<TranscriptionEngineInterval>? intervals,
+        CancellationToken cancellationToken)
+    {
         cancellationToken.ThrowIfCancellationRequested();
 
+        var chunksJsonPath = await WriteChunksJsonAsync(intervals, cancellationToken);
         var startInfo = new ProcessStartInfo
         {
             FileName = workerPath,
@@ -41,47 +53,77 @@ public sealed class GigaAmWorkerClient
         startInfo.ArgumentList.Add(modelPath);
         startInfo.ArgumentList.Add("--output-json");
         startInfo.ArgumentList.Add(outputJsonPath);
-
-        using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Failed to start GigaAM worker process.");
-        var stderrTask = process.StandardError.ReadToEndAsync();
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        if (chunksJsonPath is not null)
+        {
+            startInfo.ArgumentList.Add("--chunks-json");
+            startInfo.ArgumentList.Add(chunksJsonPath);
+        }
 
         try
         {
-            await process.WaitForExitAsync(cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-            if (!process.HasExited)
+            using var process = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Failed to start GigaAM worker process.");
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+
+            try
             {
-                try
+                await process.WaitForExitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                if (!process.HasExited)
                 {
-                    process.Kill(entireProcessTree: true);
-                }
-                catch (InvalidOperationException)
-                {
-                    // The worker exited between the HasExited check and Kill.
+                    try
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        // The worker exited between the HasExited check and Kill.
+                    }
+
+                    await process.WaitForExitAsync(CancellationToken.None);
                 }
 
-                await process.WaitForExitAsync(CancellationToken.None);
+                await Task.WhenAll(stderrTask, stdoutTask);
+                throw;
             }
 
-            await Task.WhenAll(stderrTask, stdoutTask);
-            throw;
+            var stderr = await stderrTask;
+            await stdoutTask;
+
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    $"GigaAM worker exited with code {process.ExitCode}.{FormatStderr(stderr)}");
+            }
+
+            var json = await File.ReadAllTextAsync(outputJsonPath, cancellationToken);
+            return ParseResult(json);
         }
-
-        var stderr = await stderrTask;
-        await stdoutTask;
-
-        if (process.ExitCode != 0)
+        finally
         {
-            throw new InvalidOperationException(
-                $"GigaAM worker exited with code {process.ExitCode}.{FormatStderr(stderr)}");
+            if (chunksJsonPath is not null && File.Exists(chunksJsonPath))
+            {
+                File.Delete(chunksJsonPath);
+            }
+        }
+    }
+
+    private static async Task<string?> WriteChunksJsonAsync(
+        IReadOnlyList<TranscriptionEngineInterval>? intervals,
+        CancellationToken cancellationToken)
+    {
+        if (intervals is null)
+        {
+            return null;
         }
 
-        var json = await File.ReadAllTextAsync(outputJsonPath, cancellationToken);
-        return ParseResult(json);
+        var chunksJsonPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.chunks.json");
+        var json = JsonSerializer.Serialize(new WorkerChunksDto(intervals), JsonOptions);
+        await File.WriteAllTextAsync(chunksJsonPath, json, cancellationToken);
+        return chunksJsonPath;
     }
 
     private static string FormatStderr(string stderr)
@@ -104,6 +146,8 @@ public sealed class GigaAmWorkerClient
     {
         public IReadOnlyList<WorkerSegmentDto> Segments { get; init; } = [];
     }
+
+    private sealed record WorkerChunksDto(IReadOnlyList<TranscriptionEngineInterval> Chunks);
 
     private sealed record WorkerSegmentDto
     {

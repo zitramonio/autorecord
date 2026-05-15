@@ -55,6 +55,32 @@ public sealed class AudioNormalizerTests
     }
 
     [Fact]
+    public async Task NormalizeAsyncRepairsUnfinalizedRecordingWavWithZeroChunkSizes()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var inputPath = Path.Combine(root, "input.recording.wav");
+            CreateSilentWav(inputPath, new WaveFormat(48_000, 16, 2));
+            ZeroWavChunkSizes(inputPath);
+            var tempRoot = Path.Combine(root, "normalized");
+            var normalizer = new AudioNormalizer(tempRoot);
+
+            var normalized = await normalizer.NormalizeAsync(inputPath, keepIntermediateFiles: false, CancellationToken.None);
+
+            Assert.NotEqual(inputPath, normalized.NormalizedWavPath);
+            Assert.True(normalized.CreatedTemporaryFile);
+            Assert.True(File.Exists(normalized.NormalizedWavPath));
+            AssertNormalizedWavFormat(normalized.NormalizedWavPath);
+            Assert.Empty(Directory.EnumerateFiles(tempRoot, "*.repaired.wav"));
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public async Task NormalizeAsyncCreatesTempWavFromAppMp3()
     {
         var root = CreateTempRoot();
@@ -133,6 +159,35 @@ public sealed class AudioNormalizerTests
         Directory.CreateDirectory(Path.GetDirectoryName(path) ?? ".");
         using var writer = new WaveFileWriter(path, waveFormat);
         writer.Write(new byte[waveFormat.AverageBytesPerSecond / 10], 0, waveFormat.AverageBytesPerSecond / 10);
+    }
+
+    private static void ZeroWavChunkSizes(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        stream.Position = 4;
+        stream.Write(new byte[4]);
+
+        var marker = new byte[4];
+        var sizeBytes = new byte[4];
+        var dataMarker = "data"u8.ToArray();
+        stream.Position = 12;
+        while (stream.Position + 8 <= stream.Length)
+        {
+            var chunkStart = stream.Position;
+            _ = stream.Read(marker);
+            _ = stream.Read(sizeBytes);
+            var chunkSize = BitConverter.ToUInt32(sizeBytes);
+            if (marker.SequenceEqual(dataMarker))
+            {
+                stream.Position = chunkStart + 4;
+                stream.Write(new byte[4]);
+                return;
+            }
+
+            stream.Position = chunkStart + 8 + chunkSize + (chunkSize % 2);
+        }
+
+        throw new InvalidOperationException("Could not find data chunk.");
     }
 
     private static void AssertNormalizedWavFormat(string path)

@@ -1,9 +1,139 @@
 # Задачи
 
-- Выполнено: создана папка `context/` и файлы `project.md`, `decisions.md`, `tasks.md`, `session.md`.
-- Выполнено: согласован и записан дизайн MVP в `docs/superpowers/specs/2026-05-06-autorecord-design.md`.
-- Выполнено: подготовлен implementation plan в `docs/superpowers/plans/2026-05-06-autorecord-mvp.md`.
+- Выполнено: создана базовая версия приложения записи встреч.
+- Выполнено: добавлена локальная транскрибация и диаризация без облачных ASR API.
+- Выполнено: настроены публичные модели транскрибации/диаризации:
+  - ASR по умолчанию: `gigaam-v3-ru-quality`.
+  - Диаризация: `pyannote-community-1`, скачивается пользователем с Hugging Face.
+- Выполнено: добавлен выбор количества спикеров при остановке записи с таймаутом 2 минуты.
+- Выполнено: папка по умолчанию для записей и транскриптов изменена на `Documents\Autorecord`.
+- Выполнено: история транскрибаций убрана из целевого UX; остается прогресс текущей обработки.
+- Выполнено: исправлен риск блокировки/поломки устройств вывода:
+  - режим готовности держит только микрофон;
+  - output loopback открывается только во время записи;
+  - захватываются только default output devices Windows.
+- Выполнено: добавлена иконка приложения для exe/window/tray.
+- Выполнено: пересобрана publish-версия, на которую указывает `C:\Projects\autorecord\Autorecord.lnk`.
+- Выполнено: исправлено зависание UX после отмены транскрибации:
+  - `Cancelled` задача не считается текущей;
+  - карточка текущей транскрибации очищается, если активных/успешных/ошибочных задач нет;
+  - добавлен регрессионный тест выбора текущей задачи.
+- Выполнено: добавлено восстановление аварийных `.recording.wav`:
+  - чинятся нулевые размеры `RIFF`/`data` чанков;
+  - ручная транскрибация работает через repaired-копию;
+  - recovery-конвертация в `.mp3` чинит header перед чтением;
+  - добавлены regression tests для normalizer и MP3 recovery.
+- Выполнено: добавлено отображение этапов текущей транскрибации:
+  - `Чтение файла`;
+  - `Диаризация`;
+  - `Транскрибация`;
+  - `Сохранение транскрипта`;
+  - состояния: `ожидает`, `выполняется`, `готово`, `ошибка`, `отменено`.
+- Выполнено: из карточки текущей транскрибации удалены progress bar и строка процентов.
+- Выполнено: собран public installer:
+  - `C:\Projects\autorecord\.worktrees\mvp\artifacts\installer\Autorecord-Setup-WithModels.exe`;
+  - размер `857.4 MiB`;
+  - включает текущий publish и `gigaam-v3-ru-quality`;
+  - не включает Parakeet и `pyannote-community-1`;
+  - installer сделан как GUI wizard без console window;
+  - public shortcut: `C:\Projects\autorecord\Autorecord-Public-Setup.lnk`.
+- Выполнено: добавлена повторяемая сборка installer:
+  - `scripts\package-installer.ps1`;
+  - `tools\installer\AutorecordInstaller.cs`.
+- Выполнено: Parakeet убран из публичной версии:
+  - отсутствует в `models/catalog.json`;
+  - не попадает в installer payload;
+  - старая настройка Parakeet нормализуется обратно на GigaAM.
+- Выполнено: добавлен public release UX:
+  - кнопка `Скачать модель для разделения на спикеров` появляется, пока `pyannote-community-1` не установлена;
+  - диалог Hugging Face token начинается с логина/регистрации, содержит реальные PNG `hf1.png`–`hf8.png`, кликабельные ссылки и поле token внизу;
+  - вкладка `О программе` содержит лицензии GigaAM/Pyannote, мягкое предупреждение о записи участников и кликабельные ссылки;
+  - вкладка `Транскрибация` скрывает внутренний выбор ASR/диаризации, статусы моделей и служебные кнопки;
+  - по умолчанию включён только TXT-экспорт.
 - Текущие задачи:
-  - Выбрать режим выполнения плана: subagent-driven или inline execution.
-  - Перед реализацией установить .NET 10 SDK, если `dotnet` недоступен.
-- Следующий шаг: начать реализацию по плану после выбора режима выполнения.
+  - Проверить installer на тестовой установке.
+  - Проверить UX этапов без progress bar на длинной транскрибации.
+  - Повторить failed-задачу для `C:\Users\User\Documents\13.05.2026 12.59.recording.wav`.
+  - Проверить вручную отмену транскрибации в свежем publish build.
+  - Проверить вручную Creative BT-L3 на реальном созвоне/локальном тесте вывода.
+  - Проверить, что системный звук снова попадает в запись и длина файла соответствует длительности записи.
+  - Проверить скачивание `pyannote-community-1` через Hugging Face token в свежем publish.
+  - Если Bluetooth-вывод снова ломается, добавить диагностический лог выбранных Windows default render endpoints перед записью.
+- Выполнено: добавлено сохранение технических дорожек записи:
+  - итоговый combined MP3 остается основным файлом записи;
+  - `*.mic.wav` сохраняет микрофонные input sources;
+  - `*.system.wav` сохраняет системные render loopback sources;
+  - событие сохранения записи передает optional пути к этим дорожкам.
+- Текущие задачи:
+  - Сделать короткую ручную запись и проверить рядом с MP3 файлы `*.mic.wav` и `*.system.wav`.
+  - Проверить, что автотранскрибация после записи использует `GigaAM v3`.
+  - Позже оценить, даст ли использование `system`/`mic` дорожек улучшение диаризации; текущий pipeline пока транскрибирует combined MP3.
+- Выполнено:
+  - После закрытия приложения `scripts\publish.ps1` успешно пересобрал актуальный publish.
+  - Publish exe smoke-запущен с `--minimized`.
+  - Installer `Autorecord-Setup-WithModels.exe` пересобран на свежем publish и проверен по payload marker/required entries.
+- Выполнено:
+  - Public release installer пересобран без Parakeet и без модели `pyannote-community-1`.
+  - Payload проверен: внутри есть только bundled модель `gigaam-v3-ru-quality`.
+  - Полная проверка: `C:\Users\User\.dotnet\dotnet.exe test Autorecord.sln --no-restore` — 391/391 passed.
+  - Release build: `C:\Users\User\.dotnet\dotnet.exe build Autorecord.sln -c Release --no-restore` — без предупреждений и ошибок.
+- Выполнено:
+  - Installer stub проверен как `Windows GUI` subsystem.
+  - `scripts\publish.ps1` и `scripts\package-installer.ps1 -SkipPublish` успешно выполнены после UI/installer правок.
+- Выполнено:
+  - Главный экран `Запись` перестроен в framed-блоки настроек.
+  - Календарный автостарт вынесен в отдельный checkbox и реально отключает автозапуск записи по событию.
+  - Кнопки `Начать запись`/`Остановить запись` заменены на XAML-иконки из `Resources/Buttons`.
+  - Автоостановку по тишине можно выключить; при выключении stop prompt не появляется.
+  - Таймаут бездействия в stop prompt стал настраиваемым через поле `Автоматически ответить "Да"...`.
+  - Всплывающие уведомления можно выключить через checkbox.
+  - Полная проверка после правок главного экрана: `C:\Users\User\.dotnet\dotnet.exe test Autorecord.sln --no-restore` — 395/395 passed.
+- Выполнено:
+  - Исправлен layout экрана лицензии installer wizard:
+    - правая граница RichTextBox больше не уезжает за окно;
+    - checkbox согласия снова виден;
+    - `Далее >` включается только после согласия.
+  - Добавлен regression test на начальный размер wizard page.
+  - Public installer пересобран: `C:\Projects\autorecord\.worktrees\mvp\artifacts\installer\Autorecord-Setup-WithModels.exe`.
+  - Полная проверка после фикса installer: `C:\Users\User\.dotnet\dotnet.exe test Autorecord.sln --no-restore` — 396/396 passed.
+- Выполнено:
+  - Исправлена установка в `C:\Program Files`:
+    - `C:\Program Files` нормализуется в `C:\Program Files\Autorecord`;
+    - protected install root перезапускает installer через UAC;
+    - опасные корневые/system paths запрещены.
+  - Добавлен regression test на `Program Files`/UAC сценарий.
+  - Из-за заблокированного старого setup собран новый файл `C:\Projects\autorecord\.worktrees\mvp\artifacts\installer\Autorecord-Setup-WithModels-Fixed.exe`.
+  - `C:\Projects\autorecord\Autorecord-Public-Setup.lnk` переключён на fixed setup.
+  - Полная проверка после фикса installer: `C:\Users\User\.dotnet\dotnet.exe test Autorecord.sln --no-restore` — 397/397 passed.
+- Выполнено:
+  - Отменён вариант установки через два файла `exe + payload.zip`; public installer остаётся одним self-contained `.exe`.
+  - Исправлено отображение пути установки:
+    - выбор `C:\Program Files` через `Обзор...` сразу показывает `C:\Program Files\Autorecord`;
+    - ручной ввод нормализуется при уходе из поля и перед установкой.
+  - Собран новый единый setup: `C:\Projects\autorecord\.worktrees\mvp\artifacts\installer\Autorecord-Setup-WithModels-ProgramFilesFix.exe`.
+  - `C:\Projects\autorecord\Autorecord-Public-Setup.lnk` переключён на этот setup.
+  - Полная проверка после финального installer fix: `C:\Users\User\.dotnet\dotnet.exe test Autorecord.sln --no-restore` — 397/397 passed.
+- Выполнено:
+  - Неверный Hugging Face token теперь показывает `Ошибка - неверный токен`.
+  - Обновлён `hf8.png` в ресурсах диалога Hugging Face token.
+  - Убрана лишняя success-надпись `Модель установлена и готова...` после установки модели.
+  - Статус ошибки скачивания остаётся видимым после завершения попытки.
+  - Publish пересобран перед упаковкой installer, чтобы исправленная вкладка `Запись` попала в payload.
+  - Собран новый единый setup: `C:\Projects\autorecord\.worktrees\mvp\artifacts\installer\Autorecord-Setup-WithModels-ReleaseFix.exe`.
+  - `C:\Projects\autorecord\Autorecord-Public-Setup.lnk` переключён на ReleaseFix setup.
+  - Полная проверка после release fix: `C:\Users\User\.dotnet\dotnet.exe test Autorecord.sln --no-restore` — 397/397 passed.
+- Выполнено:
+  - Главное окно теперь открывается `760x720`, имеет минимальный размер `640x520` и остаётся resizable.
+  - Вкладка `Запись` получила вертикальный scroll, чтобы нижние настройки были доступны при маленьком окне.
+  - Добавлен regression test на размер окна и scroll вкладки `Запись`.
+  - Fresh publish и public installer пересобраны:
+    - `C:\Projects\autorecord\.worktrees\mvp\artifacts\installer\Autorecord-Setup-WithModels-WindowSizeFix.exe`;
+    - `C:\Projects\autorecord\Autorecord-Public-Setup.lnk` переключён на WindowSizeFix setup.
+  - Полная проверка после window size fix: `C:\Users\User\.dotnet\dotnet.exe test Autorecord.sln --no-restore` — 398/398 passed.
+- Выполнено:
+  - На вкладку `О программе` добавлена строка для предложений и пожеланий с кликабельным email `zitramonio@proton.me`.
+  - Обновлён targeted test для вкладки `О программе`: `AboutTabContainsModelLicensesAndRecordingNotice` — passed.
+  - Fresh publish пересобран.
+  - Собран новый единый setup: `C:\Projects\autorecord\.worktrees\mvp\artifacts\installer\Autorecord-Setup-WithModels-AboutContact.exe`.
+  - `C:\Projects\autorecord\Autorecord-Public-Setup.lnk` переключён на AboutContact setup.
+- Следующий шаг: установить через `Autorecord-Public-Setup.lnk`, проверить стартовый размер окна, scroll вкладки `Запись`, нижнюю строку email на вкладке `О программе`, затем проверить неверный Hugging Face token и скачать `pyannote-community-1` с корректным token.

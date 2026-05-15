@@ -51,7 +51,12 @@ def main() -> int:
 
     require_model_files(model_path, args.model_name)
     audio = read_normalized_wav(input_path)
-    speech_chunks = build_speech_chunks(audio)
+    requested_intervals = load_requested_intervals(args.chunks_json, audio)
+    speech_chunks = (
+        build_chunks_from_intervals(requested_intervals, audio)
+        if requested_intervals is not None
+        else build_speech_chunks(audio)
+    )
 
     if not speech_chunks:
         write_result(output_json_path, [])
@@ -90,6 +95,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--output-json", required=True)
+    parser.add_argument("--chunks-json")
     parser.add_argument("--model-name", default="v3_e2e_rnnt")
     parser.add_argument("--device", default="cpu")
     return parser.parse_args()
@@ -146,6 +152,37 @@ def build_speech_chunks(audio: Audio) -> list[Chunk]:
     chunks.extend(split_long_interval(Interval(current_start, current_end)))
     duration = duration_seconds(audio)
     return [Chunk(decode=pad_interval(chunk, duration), output=chunk) for chunk in chunks]
+
+
+def load_requested_intervals(chunks_json: str | None, audio: Audio) -> list[Interval] | None:
+    if not chunks_json:
+        return None
+
+    duration = duration_seconds(audio)
+    data = json.loads(Path(chunks_json).read_text(encoding="utf-8"))
+    intervals: list[Interval] = []
+    for item in data.get("chunks", []):
+        start = float(item["start"])
+        end = float(item["end"])
+        if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end < start:
+            raise ValueError("Chunk intervals must be finite, non-negative, and ordered.")
+
+        start = min(start, duration)
+        end = min(end, duration)
+        if end > start:
+            intervals.append(Interval(start, end))
+
+    return intervals
+
+
+def build_chunks_from_intervals(intervals: list[Interval], audio: Audio) -> list[Chunk]:
+    chunks: list[Chunk] = []
+    duration = duration_seconds(audio)
+    for interval in intervals:
+        for split in split_long_interval(interval):
+            chunks.append(Chunk(decode=pad_interval(split, duration), output=split))
+
+    return chunks
 
 
 def detect_speech(audio: Audio) -> list[Interval]:

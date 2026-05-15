@@ -34,6 +34,15 @@ public sealed class UserFacingErrorMessagesTests
     }
 
     [Fact]
+    public void ForModelDownloadMapsHuggingFaceAuthorizationError()
+    {
+        var message = UserFacingErrorMessages.ForModelDownload(
+            new InvalidOperationException("Model download failed with HTTP 401 (Unauthorized)."));
+
+        Assert.Equal("Ошибка - неверный токен", message);
+    }
+
+    [Fact]
     public void ForTranscriptionMapsMissingModelError()
     {
         var message = UserFacingErrorMessages.ForTranscription(

@@ -1,4 +1,3 @@
-using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 using System.Diagnostics;
@@ -10,25 +9,38 @@ namespace Autorecord.Core.Audio;
 
 public sealed class NaudioWavRecorder : IAudioRecorder
 {
+    private const string MicrophoneTrackName = "mic";
+    private const string SystemTrackName = "system";
     private static readonly WaveFormat MixedWaveFormat = WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2);
     private static readonly WaveFormat TemporaryWaveFormat = new(48_000, 16, 2);
     private static readonly TimeSpan WriterLatency = TimeSpan.FromMilliseconds(200);
     private const int Mp3Bitrate = 128_000;
 
+    private readonly IAudioCaptureSessionFactory _captureSessionFactory;
     private readonly List<CaptureSource> _captureSources = [];
     private readonly List<BufferedWaveProvider> _sourceBuffers = [];
+    private readonly List<BufferedWaveProvider> _microphoneTrackBuffers = [];
+    private readonly List<BufferedWaveProvider> _systemTrackBuffers = [];
     private MixingSampleProvider? _mixer;
+    private MixingSampleProvider? _microphoneTrackMixer;
+    private MixingSampleProvider? _systemTrackMixer;
     private WaveFileWriter? _writer;
+    private WaveFileWriter? _microphoneTrackWriter;
+    private WaveFileWriter? _systemTrackWriter;
     private CancellationTokenSource? _writerCancellation;
     private Task? _writerTask;
     private Stopwatch? _recordingClock;
     private string? _outputPath;
     private string? _temporaryWavPath;
+    private string? _temporaryMicrophoneWavPath;
+    private string? _temporarySystemWavPath;
     private readonly object _gate = new();
     private readonly object _lifecycleGate = new();
     private float _lastInputPeak;
     private float _lastOutputPeak;
     private long _framesWritten;
+    private long _microphoneFramesWritten;
+    private long _systemFramesWritten;
     private long? _finalFramesToWrite;
     private bool _captureActive;
     private bool _recordingActive;
@@ -40,13 +52,23 @@ public sealed class NaudioWavRecorder : IAudioRecorder
     public event EventHandler<AudioFileSavedEventArgs>? FileSaved;
     public event EventHandler<AudioFileSaveFailedEventArgs>? FileSaveFailed;
 
+    public NaudioWavRecorder()
+        : this(new NaudioCaptureSessionFactory())
+    {
+    }
+
+    internal NaudioWavRecorder(IAudioCaptureSessionFactory captureSessionFactory)
+    {
+        _captureSessionFactory = captureSessionFactory;
+    }
+
     public Task PrepareAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
         lock (_lifecycleGate)
         {
-            EnsureCaptureStarted();
+            EnsureCaptureStarted(includeRenderDevices: false);
         }
 
         return Task.CompletedTask;
@@ -68,24 +90,39 @@ public sealed class NaudioWavRecorder : IAudioRecorder
                 Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? ".");
                 _outputPath = outputPath;
                 _temporaryWavPath = GetTemporaryWavPath(outputPath);
+                _temporaryMicrophoneWavPath = GetTemporaryTechnicalTrackPath(outputPath, MicrophoneTrackName);
+                _temporarySystemWavPath = GetTemporaryTechnicalTrackPath(outputPath, SystemTrackName);
                 _restartCaptureAfterStop = _captureActive;
-                EnsureCaptureStarted();
+                EnsureCaptureStarted(includeRenderDevices: true);
                 _sourceBuffers.Clear();
+                _microphoneTrackBuffers.Clear();
+                _systemTrackBuffers.Clear();
                 foreach (var source in _captureSources)
                 {
                     source.Buffer = CreateBufferedProviderForSource(MixedWaveFormat);
                     _sourceBuffers.Add(source.Buffer);
+                    source.TechnicalTrackBuffer = CreateBufferedProviderForSource(MixedWaveFormat);
+                    if (source.IsInput)
+                    {
+                        _microphoneTrackBuffers.Add(source.TechnicalTrackBuffer);
+                    }
+                    else
+                    {
+                        _systemTrackBuffers.Add(source.TechnicalTrackBuffer);
+                    }
                 }
 
-                _mixer = new MixingSampleProvider(
-                    _sourceBuffers.Select(buffer => new WaveToSampleProvider(buffer)))
-                {
-                    ReadFully = true
-                };
+                _mixer = CreateMixer(_sourceBuffers);
+                _microphoneTrackMixer = CreateMixer(_microphoneTrackBuffers);
+                _systemTrackMixer = _systemTrackBuffers.Count == 0 ? null : CreateMixer(_systemTrackBuffers);
                 _writer = new WaveFileWriter(_temporaryWavPath, TemporaryWaveFormat);
+                _microphoneTrackWriter = new WaveFileWriter(_temporaryMicrophoneWavPath, TemporaryWaveFormat);
+                _systemTrackWriter = new WaveFileWriter(_temporarySystemWavPath, TemporaryWaveFormat);
                 _writerCancellation = new CancellationTokenSource();
                 _recordingClock = Stopwatch.StartNew();
                 _framesWritten = 0;
+                _microphoneFramesWritten = 0;
+                _systemFramesWritten = 0;
                 _finalFramesToWrite = null;
                 _writerStopRequested = false;
                 _captureStoppedForWriter = false;
@@ -146,15 +183,26 @@ public sealed class NaudioWavRecorder : IAudioRecorder
         {
             _writer?.Dispose();
             _writer = null;
+            _microphoneTrackWriter?.Dispose();
+            _microphoneTrackWriter = null;
+            _systemTrackWriter?.Dispose();
+            _systemTrackWriter = null;
             foreach (var source in _captureSources)
             {
                 source.Buffer = null;
+                source.TechnicalTrackBuffer = null;
             }
 
             _sourceBuffers.Clear();
+            _microphoneTrackBuffers.Clear();
+            _systemTrackBuffers.Clear();
             _mixer = null;
+            _microphoneTrackMixer = null;
+            _systemTrackMixer = null;
             _recordingClock = null;
             _framesWritten = 0;
+            _microphoneFramesWritten = 0;
+            _systemFramesWritten = 0;
             _finalFramesToWrite = null;
             _writerStopRequested = false;
             _captureStoppedForWriter = false;
@@ -166,13 +214,15 @@ public sealed class NaudioWavRecorder : IAudioRecorder
         _writerTask = null;
         _outputPath = null;
         _temporaryWavPath = null;
+        _temporaryMicrophoneWavPath = null;
+        _temporarySystemWavPath = null;
         _restartCaptureAfterStop = false;
 
         if (restartCaptureAfterStop)
         {
             try
             {
-                EnsureCaptureStarted();
+                EnsureCaptureStarted(includeRenderDevices: false);
             }
             catch
             {
@@ -199,6 +249,8 @@ public sealed class NaudioWavRecorder : IAudioRecorder
     private async Task RunWriterLoopAsync(CancellationToken cancellationToken)
     {
         var buffer = new float[MixedWaveFormat.SampleRate * MixedWaveFormat.Channels / 50];
+        var microphoneBuffer = new float[buffer.Length];
+        var systemBuffer = new float[buffer.Length];
 
         while (true)
         {
@@ -209,20 +261,31 @@ public sealed class NaudioWavRecorder : IAudioRecorder
                 if (_writer is not null && _mixer is not null)
                 {
                     var targetFrames = GetWriterTargetFrames();
-                    samplesToWrite = CalculateSamplesToWrite(
-                        targetFrames,
-                        _framesWritten,
-                        MixedWaveFormat.Channels,
-                        buffer.Length);
-
-                    if (samplesToWrite > 0)
+                    samplesToWrite = Math.Max(
+                        samplesToWrite,
+                        WriteDueSamples(_writer, _mixer, targetFrames, ref _framesWritten, buffer));
+                    if (_microphoneTrackWriter is not null)
                     {
-                        var samplesRead = _mixer.Read(buffer, 0, samplesToWrite);
-                        if (samplesRead > 0)
-                        {
-                            _writer.WriteSamples(buffer, 0, samplesRead);
-                            _framesWritten += samplesRead / MixedWaveFormat.Channels;
-                        }
+                        samplesToWrite = Math.Max(
+                            samplesToWrite,
+                            WriteDueSamples(
+                                _microphoneTrackWriter,
+                                _microphoneTrackMixer,
+                                targetFrames,
+                                ref _microphoneFramesWritten,
+                                microphoneBuffer));
+                    }
+
+                    if (_systemTrackWriter is not null)
+                    {
+                        samplesToWrite = Math.Max(
+                            samplesToWrite,
+                            WriteDueSamples(
+                                _systemTrackWriter,
+                                _systemTrackMixer,
+                                targetFrames,
+                                ref _systemFramesWritten,
+                                systemBuffer));
                     }
                 }
 
@@ -230,7 +293,9 @@ public sealed class NaudioWavRecorder : IAudioRecorder
                     _writerStopRequested,
                     _captureStoppedForWriter,
                     _framesWritten,
-                    _finalFramesToWrite);
+                    _finalFramesToWrite) &&
+                    TechnicalTrackReachedFinalFrame(_microphoneFramesWritten, _finalFramesToWrite) &&
+                    TechnicalTrackReachedFinalFrame(_systemFramesWritten, _finalFramesToWrite);
             }
 
             if (shouldStop)
@@ -243,6 +308,55 @@ public sealed class NaudioWavRecorder : IAudioRecorder
                 await Task.Delay(5, cancellationToken);
             }
         }
+    }
+
+    private static MixingSampleProvider CreateMixer(IReadOnlyList<BufferedWaveProvider> buffers)
+    {
+        return new MixingSampleProvider(buffers.Select(buffer => new WaveToSampleProvider(buffer)))
+        {
+            ReadFully = true
+        };
+    }
+
+    private static int WriteDueSamples(
+        WaveFileWriter writer,
+        MixingSampleProvider? mixer,
+        long targetFrames,
+        ref long framesWritten,
+        float[] buffer)
+    {
+        var samplesToWrite = CalculateSamplesToWrite(
+            targetFrames,
+            framesWritten,
+            MixedWaveFormat.Channels,
+            buffer.Length);
+        if (samplesToWrite <= 0)
+        {
+            return 0;
+        }
+
+        var samplesRead = samplesToWrite;
+        if (mixer is null)
+        {
+            Array.Clear(buffer, 0, samplesToWrite);
+        }
+        else
+        {
+            samplesRead = mixer.Read(buffer, 0, samplesToWrite);
+        }
+
+        if (samplesRead > 0)
+        {
+            writer.WriteSamples(buffer, 0, samplesRead);
+            framesWritten += samplesRead / MixedWaveFormat.Channels;
+        }
+
+        return samplesToWrite;
+    }
+
+    private static bool TechnicalTrackReachedFinalFrame(long framesWritten, long? finalFramesToWrite)
+    {
+        return finalFramesToWrite.HasValue && framesWritten >= finalFramesToWrite.Value;
     }
 
     private long GetWriterTargetFrames()
@@ -262,6 +376,7 @@ public sealed class NaudioWavRecorder : IAudioRecorder
 
     private void AddToBuffer(
         BufferedWaveProvider? target,
+        BufferedWaveProvider? technicalTrackTarget,
         byte[] buffer,
         int bytesRecorded,
         WaveFormat sourceFormat)
@@ -277,66 +392,71 @@ public sealed class NaudioWavRecorder : IAudioRecorder
             if (_recordingActive && target is not null)
             {
                 target.AddSamples(converted, 0, converted.Length);
+                technicalTrackTarget?.AddSamples(converted, 0, converted.Length);
             }
         }
     }
 
-    private void EnsureCaptureStarted()
+    private void EnsureCaptureStarted(bool includeRenderDevices)
     {
-        if (_captureActive)
+        if (_captureSources.All(source => !source.IsInput))
         {
-            return;
+            StartInputCaptureSource();
         }
 
-        var startedSources = new List<CaptureSource>();
-        var input = new WasapiCapture
+        if (includeRenderDevices && _captureSources.All(source => source.IsInput))
         {
-            WaveFormat = MixedWaveFormat
-        };
+            StartRenderCaptureSources();
+        }
+
+        _captureActive = _captureSources.Count > 0;
+    }
+
+    private void StartInputCaptureSource()
+    {
+        var input = _captureSessionFactory.CreateInput(MixedWaveFormat);
         var inputSource = CreateCaptureSource(input, isInput: true);
         try
         {
             input.StartRecording();
-            startedSources.Add(inputSource);
+            _captureSources.Add(inputSource);
         }
         catch
         {
             input.Dispose();
             throw;
         }
+    }
 
+    private void StartRenderCaptureSources()
+    {
+        IReadOnlyList<IAudioCaptureSession> renderCaptures;
         try
         {
-            using var enumerator = new MMDeviceEnumerator();
-            foreach (var device in enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
-            {
-                WasapiLoopbackCapture? output = null;
-                try
-                {
-                    output = new WasapiLoopbackCapture(device)
-                    {
-                        WaveFormat = MixedWaveFormat
-                    };
-                    var outputSource = CreateCaptureSource(output, isInput: false);
-                    output.StartRecording();
-                    startedSources.Add(outputSource);
-                }
-                catch
-                {
-                    // Some active render endpoints can be temporarily unavailable. Keep recording
-                    // from the remaining devices instead of failing the whole meeting recording.
-                    output?.Dispose();
-                }
-            }
+            renderCaptures = _captureSessionFactory.CreateRenderLoopbacks();
         }
         catch
         {
             // Render endpoint enumeration can fail on restricted systems. Microphone capture
             // should still work, and the UI will continue showing system-output level as silent.
+            return;
         }
 
-        _captureSources.AddRange(startedSources);
-        _captureActive = true;
+        foreach (var output in renderCaptures)
+        {
+            try
+            {
+                var outputSource = CreateCaptureSource(output, isInput: false);
+                output.StartRecording();
+                _captureSources.Add(outputSource);
+            }
+            catch
+            {
+                // Some active render endpoints can be temporarily unavailable. Keep recording
+                // from the remaining devices instead of failing the whole meeting recording.
+                output.Dispose();
+            }
+        }
     }
 
     private void StopCapture()
@@ -456,6 +576,20 @@ public sealed class NaudioWavRecorder : IAudioRecorder
         return Path.Combine(directory ?? "", $"{fileName}.recording.wav");
     }
 
+    internal static string GetTemporaryTechnicalTrackPath(string outputPath, string trackName)
+    {
+        var directory = Path.GetDirectoryName(outputPath);
+        var fileName = Path.GetFileNameWithoutExtension(outputPath);
+        return Path.Combine(directory ?? "", $"{fileName}.{trackName}.recording.wav");
+    }
+
+    internal static string GetFinalTechnicalTrackPath(string outputPath, string trackName)
+    {
+        var directory = Path.GetDirectoryName(outputPath);
+        var fileName = Path.GetFileNameWithoutExtension(outputPath);
+        return Path.Combine(directory ?? "", $"{fileName}.{trackName}.wav");
+    }
+
     internal static string GetTemporaryMp3Path(string outputPath) => $"{outputPath}.tmp";
 
     internal static string GetEncodingMp3Path(string outputPath) => $"{outputPath}.encoding.mp3";
@@ -494,6 +628,8 @@ public sealed class NaudioWavRecorder : IAudioRecorder
             File.Move(encodingMp3Path, temporaryMp3Path);
             var finalPath = GetAvailableOutputPath(outputPath);
             File.Move(temporaryMp3Path, finalPath);
+            FinalizeTechnicalTrackWav(outputPath, finalPath, "mic");
+            FinalizeTechnicalTrackWav(outputPath, finalPath, "system");
             File.Delete(temporaryWavPath);
             return finalPath;
         }
@@ -525,7 +661,7 @@ public sealed class NaudioWavRecorder : IAudioRecorder
                 var savedPath = await Task.Run(
                     () => FinalizeTemporaryWavToMp3(temporaryWavPath, outputPath),
                     CancellationToken.None);
-                onSaved(new AudioFileSavedEventArgs(outputPath, savedPath, temporaryWavPath));
+                onSaved(CreateAudioFileSavedEventArgs(outputPath, savedPath, temporaryWavPath));
             }
             catch (Exception ex)
             {
@@ -541,7 +677,7 @@ public sealed class NaudioWavRecorder : IAudioRecorder
             try
             {
                 var savedPath = FinalizeTemporaryWavToMp3(temporaryWavPath, outputPath);
-                FileSaved?.Invoke(this, new AudioFileSavedEventArgs(outputPath, savedPath, temporaryWavPath));
+                FileSaved?.Invoke(this, CreateAudioFileSavedEventArgs(outputPath, savedPath, temporaryWavPath));
             }
             catch (Exception ex)
             {
@@ -552,6 +688,7 @@ public sealed class NaudioWavRecorder : IAudioRecorder
 
     internal static void EncodeTemporaryWavToMp3(string temporaryWavPath, string outputPath)
     {
+        _ = WavFileRepair.TryRepairInPlace(temporaryWavPath);
         using (var reader = new WaveFileReader(temporaryWavPath))
         {
             MediaFoundationEncoder.EncodeToMp3(reader, outputPath, Mp3Bitrate);
@@ -577,6 +714,35 @@ public sealed class NaudioWavRecorder : IAudioRecorder
                 return candidate;
             }
         }
+    }
+
+    private static AudioFileSavedEventArgs CreateAudioFileSavedEventArgs(
+        string requestedOutputPath,
+        string savedOutputPath,
+        string temporaryWavPath)
+    {
+        var microphoneTrackPath = GetFinalTechnicalTrackPath(savedOutputPath, "mic");
+        var systemTrackPath = GetFinalTechnicalTrackPath(savedOutputPath, "system");
+        return new AudioFileSavedEventArgs(
+            requestedOutputPath,
+            savedOutputPath,
+            temporaryWavPath,
+            File.Exists(microphoneTrackPath) ? microphoneTrackPath : null,
+            File.Exists(systemTrackPath) ? systemTrackPath : null);
+    }
+
+    private static void FinalizeTechnicalTrackWav(string requestedOutputPath, string savedOutputPath, string trackName)
+    {
+        var temporaryTrackPath = GetTemporaryTechnicalTrackPath(requestedOutputPath, trackName);
+        if (!File.Exists(temporaryTrackPath))
+        {
+            return;
+        }
+
+        _ = WavFileRepair.TryRepairInPlace(temporaryTrackPath);
+        var finalTrackPath = GetFinalTechnicalTrackPath(savedOutputPath, trackName);
+        finalTrackPath = GetAvailableOutputPath(finalTrackPath);
+        File.Move(temporaryTrackPath, finalTrackPath);
     }
 
     private static void DeleteIfExists(string path)
@@ -677,12 +843,12 @@ public sealed class NaudioWavRecorder : IAudioRecorder
         return false;
     }
 
-    private CaptureSource CreateCaptureSource(WasapiCapture capture, bool isInput)
+    private CaptureSource CreateCaptureSource(IAudioCaptureSession capture, bool isInput)
     {
         var source = new CaptureSource(capture, capture.WaveFormat, isInput);
         capture.DataAvailable += (_, e) =>
         {
-            AddToBuffer(source.Buffer, e.Buffer, e.BytesRecorded, source.SourceFormat);
+            AddToBuffer(source.Buffer, source.TechnicalTrackBuffer, e.Buffer, e.BytesRecorded, source.SourceFormat);
             var peak = CalculatePeak(e.Buffer, e.BytesRecorded, source.SourceFormat);
             if (source.IsInput)
             {
@@ -704,12 +870,13 @@ public sealed class NaudioWavRecorder : IAudioRecorder
         return source;
     }
 
-    private sealed class CaptureSource(WasapiCapture capture, WaveFormat sourceFormat, bool isInput)
+    private sealed class CaptureSource(IAudioCaptureSession capture, WaveFormat sourceFormat, bool isInput)
     {
-        public WasapiCapture Capture { get; } = capture;
+        public IAudioCaptureSession Capture { get; } = capture;
         public WaveFormat SourceFormat { get; } = sourceFormat;
         public bool IsInput { get; } = isInput;
         public float LastPeak { get; set; }
         public BufferedWaveProvider? Buffer { get; set; }
+        public BufferedWaveProvider? TechnicalTrackBuffer { get; set; }
     }
 }
